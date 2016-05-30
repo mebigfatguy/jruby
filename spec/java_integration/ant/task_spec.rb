@@ -1,6 +1,8 @@
 require File.expand_path('../../ant_spec_helper', __FILE__)
 
-describe Ant, "tasks:", :type => :ant do
+describe Ant, "tasks:" do
+  include Ant::RSpec::AntExampleGroup
+
   before :all do
     # The single example ant project these specs will validate
     @output = output = "ant-file#{rand}.txt"
@@ -9,7 +11,7 @@ describe Ant, "tasks:", :type => :ant do
       property :name => "jar", :value => "spec-test.jar"
       property :name => "dir", :value => "build"
       taskdef :name => "jarjar", :classname => "com.tonicsystems.jarjar.JarJarTask",
-        :classpath => "${basedir}/build_lib/jarjar-1.0.jar"
+        :classpath => "${basedir}/test/target/jarjar.jar"
 
       target :jar do
         jar :destfile => "${jar}", :compress => "true", :index => "true" do
@@ -54,10 +56,10 @@ describe Ant, "tasks:", :type => :ant do
       @ant.project.targets["jar"]
     end
 
-    it { should have_structure([{:_name => "jar", :destfile => "spec-test.jar", :compress => "true", :index => "true",
+    it { is_expected.to have_structure([{:_name => "jar", :destfile => "spec-test.jar", :compress => "true", :index => "true",
                                  :_children => [ { :_name => "fileset", :dir => "build" }] }]) }
 
-    it { should have_configured_structure([{:_type => "org.apache.tools.ant.taskdefs.Jar",
+    it { is_expected.to have_configured_structure([{:_type => "org.apache.tools.ant.taskdefs.Jar",
                                             :_children => [{:_type => "org.apache.tools.ant.types.FileSet"}] }]) }
 
   end
@@ -67,11 +69,11 @@ describe Ant, "tasks:", :type => :ant do
       @ant.project.targets["jarjar"]
     end
 
-    it { should have_structure([{:_name => "jarjar", :destfile => "spec-test.jar", :compress => "true",
+    it { is_expected.to have_structure([{:_name => "jarjar", :destfile => "spec-test.jar", :compress => "true",
                                  :_children => [ { :_name => "fileset", :dir => "build" },
                                                  { :_name => "zipfileset", :src => "./lib/jruby.jar" }] }]) }
 
-    it { should have_configured_structure([{:_type => "com.tonicsystems.jarjar.JarJarTask",
+    it { is_expected.to have_configured_structure([{:_type => "com.tonicsystems.jarjar.JarJarTask",
                                             :_children => [{:_type => "org.apache.tools.ant.types.FileSet"},
                                                            {:_type => "org.apache.tools.ant.types.ZipFileSet"}] }]) }
   end
@@ -79,15 +81,15 @@ describe Ant, "tasks:", :type => :ant do
   describe "macrodef" do
     it "should be defined and invokable from a target" do
       @ant.execute_target(:greet)
-      File.read(@output).should == "Hello Ant"
+      expect(File.read(@output)).to eq("Hello Ant")
     end
   end
 
   describe "rubygreet" do
     it "should execute the code block when the target is executed" do
-      @message.should == ""
+      expect(@message).to be_empty
       @ant.execute_target(:rubygreet)
-      @message.should == "Hello Ruby!"
+      expect(@message).to eq("Hello Ruby!")
     end
   end
 end

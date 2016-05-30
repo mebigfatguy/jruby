@@ -1,44 +1,50 @@
+#-*- mode: ruby -*-
+
+require 'fileutils'
+
+# Assumes this file is in rakelib and that a top-level pom.xml file exists.
+def maven_retrieve_pom_version
+  require 'rexml/document'
+  file = File.new(File.join(File.dirname(__FILE__), '..', 'pom.xml'))
+  REXML::Document.new(file).elements.each("project/version"){|e| return e.text}
+  raise Errno::ENOENT.new "Cannot find project pom.xml"
+end
+
+def maven
+  unless @__maven__
+    require 'maven/ruby/maven'
+    @__maven__ = Maven::Ruby::Maven.new
+    @__maven__.embedded = true
+  end
+  @__maven__
+rescue LoadError => e
+  warn 'make sure you have ruby-maven gem installed'
+  raise e
+end
+
 namespace :maven do
-  class Pom
-    def initialize(filename)
-      @filename = filename
-      @lines = IO.readlines(filename)
-    end
 
-    def update_version(version)
-      group = nil
-      artifact = nil
-      @lines.each do |line|
-        match = line.match(%r{<groupId>([^<]+)</groupId>})
-        if match
-          group = match[1]
-          next
-        end
-        match = line.match(%r{<artifactId>([^<]+)</artifactId>})
-        if match
-          artifact = match[1]
-          next
-        end
-        if line =~ %r{<version>[0-9][^<]+</version>} && group =~ /^org.jruby/ && artifact =~ /^(jruby|shared)/
-          line.sub!(/<version>([^<]+)<\/version>/, "<version>#{version}</version>")
-        end
-      end
-    end
-
-    def save
-      File.open(@filename, 'w') {|f| @lines.each {|l| f << l } }
-    end
+  desc "Dump pom.xml files"
+  task :dump_poms do
+    maven.install( '-Pall' )
   end
 
-  desc "Update versions in maven poms with string passed in ENV['VERSION']"
-  task :updatepoms do
-    version = ENV['VERSION'] or abort("Pass the new version with VERSION={version}")
-    dir =  Dir.pwd
-    Dir["#{dir}/**/pom.xml"].each do |f|
-      puts "updating #{f}"
-      pom = Pom.new(f)
-      pom.update_version(version)
-      pom.save
-    end
+  desc "Set new version"
+  task :set_version => [:do_set_version, :dump_poms ]
+
+  task :do_set_version do
+    version = readline
+    version.strip!
+    File.open( '../VERSION', 'w' ) { |f| f.print version }
+  end
+
+  desc "Prepare for the release"
+  task :prepare_release => :do_set_version do
+    maven.exec( :clean, :install, '-Prelease' )
+  end
+
+  desc "Deploy release and bump version"
+  task :deploy_release do
+    system "mvn clean deploy -Psonatype-oss-release,release"
   end
 end

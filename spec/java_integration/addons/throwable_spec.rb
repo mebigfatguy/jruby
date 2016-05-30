@@ -5,45 +5,37 @@ describe "A Java Throwable" do
   it "implements backtrace" do
     ex = java.lang.Exception.new
     trace = nil
-    lambda {trace = ex.backtrace}.should_not raise_error
-    trace.should == ex.stack_trace.map(&:to_s)
+    expect {trace = ex.backtrace}.not_to raise_error
+    expect(trace).to eq(ex.stack_trace.map(&:to_s))
   end
   
-  it "implements backtrace=" do
-    ex = java.lang.Exception.new
+  it "implements backtrace= as a no-op" do
+    ex = java.lang.IllegalStateException.new
+    backtrace = ex.backtrace
     ex.set_backtrace ['blah']
-    ex.backtrace.should == ['blah']
+    expect(ex.backtrace).to eq backtrace
   end
   
   it "implements to_s as message" do
     ex = java.lang.Exception.new
-    ex.to_s.should == ""
-    ex.to_s.should == ex.message
+    expect(ex.to_s).to eq ''
+    expect(ex.to_s).to eq ex.message
     
-    ex = java.lang.Exception.new('hello')
-    ex.to_s.should == 'hello'
-    ex.to_s.should == ex.message
-  end
-  
-  it "implements to_str to call to_s" do
-    ex = java.lang.Exception.new
-    def ex.to_s
-      'hello'
-    end
-    
-    ex.to_str.should == 'hello'
+    ex = java.lang.RuntimeException.new('hello')
+    expect(ex.to_s).to eq 'hello'
+    expect(ex.to_s).to eq ex.message
   end
   
   it "implements inspect as toString" do
     ex = java.lang.Exception.new('hello')
-    ex.inspect.should == "java.lang.Exception: hello"
+    expect(ex.inspect).to eq "java.lang.Exception: hello"
   end
 
   it "can be rescued by rescue Exception" do
     begin
       raise ex = java.lang.Exception.new
     rescue Exception => e
-      e.should == ex
+      expect(e).to eq(ex)
     end
   end
   
@@ -51,7 +43,7 @@ describe "A Java Throwable" do
     begin
       raise ex = java.lang.Exception.new
     rescue java.lang.Exception => e
-      e.should == ex
+      expect(e).to eq(ex)
     end
   end
   
@@ -59,7 +51,7 @@ describe "A Java Throwable" do
     begin
       raise ex = java.lang.Exception.new
     rescue Object => e
-      e.should == ex
+      expect(e).to eq(ex)
     end
   end
 end
@@ -76,17 +68,17 @@ describe "Rescuing a Java exception using Exception" do
         end
       end
     end
-    x.foo.should == 1
+    expect(x.foo).to eq 1
   end
 
   it "does not prevent non-local break from working" do
-    loop do
+    expect(loop do
       begin
         break 1
       rescue Exception
         2
       end
-    end.should == 1
+    end).to eq 1
   end
 
   it "does not prevent non-local redo from working" do
@@ -100,11 +92,11 @@ describe "Rescuing a Java exception using Exception" do
         i = 3
       end
     end
-    i.should == 2
+    expect(i).to eq 2
   end
 
   it "does not prevent catch/throw from working" do
-    lambda do
+    expect do
       catch :blah do
         begin
           throw :blah
@@ -112,7 +104,7 @@ describe "Rescuing a Java exception using Exception" do
           raise
         end
       end
-    end.should_not raise_error
+    end.not_to raise_error
   end
 
   it "does not prevent retry from working" do
@@ -127,6 +119,6 @@ describe "Rescuing a Java exception using Exception" do
         i = 3
       end
     end
-    i.should == 2
+    expect(i).to eq 2
   end
 end

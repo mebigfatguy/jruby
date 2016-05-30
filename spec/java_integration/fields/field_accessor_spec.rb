@@ -1,9 +1,9 @@
 require File.dirname(__FILE__) + "/../spec_helper"
 
-import "java_integration.fixtures.PrivateField"
-import "java_integration.fixtures.ProtectedField"
-import "java_integration.fixtures.PublicField"
-import "java_integration.fixtures.PackageField"
+java_import "java_integration.fixtures.PrivateField"
+java_import "java_integration.fixtures.ProtectedField"
+java_import "java_integration.fixtures.PublicField"
+java_import "java_integration.fixtures.PackageField"
 
 describe "field_accessor" do
   {
@@ -21,44 +21,44 @@ describe "field_accessor" do
       end
 
       it "makes those fields accessible as Ruby instance methods" do
-        lambda {
+        expect {
           base_cls.new.field
-        }.should raise_error NoMethodError
+        }.to raise_error NoMethodError
 
-        lambda {
+        expect {
           obj = @cls.new
-          obj.field.should == "1764"
+          expect(obj.field).to eq("1764")
           obj.field = "foo"
-          obj.field.should == "foo"
+          expect(obj.field).to eq("foo")
 
-          @cls.field_static.should == "1764"
+          expect(@cls.field_static).to eq("1764")
           @cls.field_static = "foo"
-          @cls.field_static.should == "foo"
-        }.should_not raise_error
+          expect(@cls.field_static).to eq("foo")
+        }.not_to raise_error
       end
     end
     
   end
 
   it "throws an error for a field which does not exist" do
-    lambda {
+    expect {
       class PackageField
         field_accessor(:totallyBogus)
       end
-    }.should raise_error
+    }.to raise_error(NameError)
     
-    lambda {
+    expect {
       class PackageField
         field_accessor(:strField, :totallyBogus)
       end
-    }.should raise_error
+    }.to raise_error(NameError)
   end
 
   it "fails on final fields" do
-    lambda {
+    expect {
       class PrivateField
         field_accessor(:finalStrField)
       end
-    }.should raise_error
+    }.to raise_error(SecurityError)
   end
 end

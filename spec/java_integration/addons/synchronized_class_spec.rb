@@ -4,18 +4,18 @@ require 'jruby/synchronized'
 describe "JRuby::Synchronized" do
   before(:each) do
     @cls = Class.new do
-      include Spec::Matchers
+      include RSpec::Matchers
 
       def call_wait
         JRuby.reference(self).wait(1)
       end
 
       def expect_synchronized
-        lambda { call_wait }.should_not raise_error
+        expect { call_wait }.not_to raise_error
       end
 
       def expect_unsynchronized
-        lambda { call_wait }.should raise_error(java.lang.IllegalMonitorStateException)
+        expect { call_wait }.to raise_error(java.lang.IllegalMonitorStateException)
       end
     end
   end
@@ -63,6 +63,6 @@ describe "JRuby::Synchronized" do
 
   it "should be includable only in classes" do
     mod = Module.new
-    lambda { mod.class_eval { include JRuby::Synchronized } }.should raise_error(TypeError)
+    expect { mod.class_eval { include JRuby::Synchronized } }.to raise_error(TypeError)
   end
 end

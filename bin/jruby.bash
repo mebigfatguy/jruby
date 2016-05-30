@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # -----------------------------------------------------------------------------
 # jruby.bash - Start Script for the JRuby interpreter
 #
@@ -17,28 +17,29 @@ cygwin=false
 case "`uname`" in
   CYGWIN*) cygwin=true;;
   Darwin) darwin=true;;
+  MINGW*) jruby.exe "$@"; exit $?;;
 esac
 
 # ----- Verify and Set Required Environment Variables -------------------------
-JAVA_VM=-client
+if [ -z "$JAVA_VM" ]; then
+  JAVA_VM=-client
+fi
 
-## resolve links - $0 may be a link to  home
-PRG=$0
-progname=`basename "$0"`
+# get the absolute path of the executable
+SELF_PATH=$(builtin cd -P -- "$(dirname -- "$0")" >/dev/null && pwd -P) && SELF_PATH=$SELF_PATH/$(basename -- "$0")
 
-while [ -h "$PRG" ] ; do
-  ls=`ls -ld "$PRG"`
-  link=`expr "$ls" : '.*-> \(.*\)$'`
-  if expr "$link" : '.*/.*' > /dev/null; then
-    if expr "$link" : '/' > /dev/null; then
-      PRG="$link"
-    else
-      PRG="`dirname ${PRG}`/${link}"
-    fi
-  else
-    PRG="`dirname $PRG`/$link"
-  fi
+# resolve symlinks
+while [ -h "$SELF_PATH" ]; do
+    # 1) cd to directory of the symlink
+    # 2) cd to the directory of where the symlink points
+    # 3) get the pwd
+    # 4) append the basename
+    DIR=$(dirname -- "$SELF_PATH")
+    SYM=$(readlink "$SELF_PATH")
+    SELF_PATH=$(cd "$DIR" && cd $(dirname -- "$SYM") && pwd)/$(basename -- "$SYM")
 done
+
+PRG=$SELF_PATH
 
 JRUBY_HOME_1=`dirname "$PRG"`           # the ./bin dir
 if [ "$JRUBY_HOME_1" = '.' ] ; then
@@ -78,22 +79,20 @@ for opt in ${JRUBY_OPTS[@]}; do
 done
 JRUBY_OPTS=${JRUBY_OPTS_TEMP}
 
-if [ -z "$JAVA_HOME" ] ; then
-  JAVA_CMD='java'
-else
-  if $cygwin; then
-    JAVA_CMD="`cygpath -u "$JAVA_HOME"`/bin/java"
+if [ -z "$JAVACMD" ] ; then
+  if [ -z "$JAVA_HOME" ] ; then
+    JAVACMD='java'
   else
-    JAVA_CMD="$JAVA_HOME/bin/java"
+    if $cygwin; then
+      JAVACMD="`cygpath -u "$JAVA_HOME"`/bin/java"
+    else
+      JAVACMD="$JAVA_HOME/bin/java"
+    fi
   fi
 fi
 
-if [ -z "$JAVA_MEM" ] ; then
-  JAVA_MEM=-Xmx500m
-fi
-
 if [ -z "$JAVA_STACK" ] ; then
-  JAVA_STACK=-Xss1024k
+  JAVA_STACK=-Xss2048k
 fi
 
 # process JAVA_OPTS
@@ -119,7 +118,7 @@ JAVA_OPTS=$JAVA_OPTS_TEMP
 
 # If you're seeing odd exceptions, you may have a bad JVM install.
 # Uncomment this and report the version to the JRuby team along with error.
-#$JAVA_CMD -version
+#$JAVACMD -version
 
 JRUBY_SHELL=/bin/sh
 
@@ -158,6 +157,9 @@ else
         if [ "$j" == "$JRUBY_HOME"/lib/jruby.jar ]; then
           continue
         fi
+        if [ "$j" == "$JRUBY_HOME"/lib/jruby-truffle.jar ]; then
+          continue
+        fi
         if [ "$j" == "$JRUBY_HOME"/lib/jruby-complete.jar ]; then
           continue
         fi
@@ -168,7 +170,7 @@ else
         fi
     done
 
-    if $cygwin; then
+    if [ "$CP" != "" ] && $cygwin; then
         CP=`cygpath -p -w "$CP"`
     fi
 fi
@@ -183,8 +185,11 @@ JAVA_ENCODING=""
 
 declare -a java_args
 declare -a ruby_args
+mode=""
 
-java_class=org.jruby.Main
+JAVA_CLASS_JRUBY_MAIN=org.jruby.Main
+java_class=$JAVA_CLASS_JRUBY_MAIN
+JAVA_CLASS_NGSERVER=org.jruby.main.NailServerMain
 
 # Split out any -J argument for passing to the JVM.
 # Scanning for args is aborted by '--'.
@@ -202,11 +207,11 @@ do
         elif [ "${val:0:4}" = "-Xss" ]; then
             JAVA_STACK=$val
         elif [ "${val}" = "" ]; then
-            $JAVA_CMD -help
+            $JAVACMD -help
             echo "(Prepend -J in front of these options when using 'jruby' command)" 
             exit
         elif [ "${val}" = "-X" ]; then
-            $JAVA_CMD -X
+            $JAVACMD -X
             echo "(Prepend -J in front of these options when using 'jruby' command)" 
             exit
         elif [ "${val}" = "-classpath" ]; then
@@ -217,6 +222,15 @@ do
             CP="$CP$CP_DELIMITER$2"
             CLASSPATH=""
             shift
+        elif [ "${val:0:3}" = "-G:" ]; then # Graal options
+            opt=${val:3}
+            case $opt in
+              +*)
+                opt="${opt:1}=true" ;;
+              -*)
+                opt="${opt:1}=false" ;;
+            esac
+            java_args=("${java_args[@]}" "-Dgraal.$opt")
         else
             if [ "${val:0:3}" = "-ea" ]; then
                 VERIFY_JRUBY="yes"
@@ -224,6 +238,23 @@ do
                 JAVA_ENCODING=$val
             fi
             java_args=("${java_args[@]}" "${1:2}")
+        fi
+        ;;
+     # Pass -X... and -X? search options through
+     -X*\.\.\.|-X*\?)
+        ruby_args=("${ruby_args[@]}" "$1") ;;
+     -X+T)
+        JRUBY_CP="$JRUBY_CP$CP_DELIMITER$JRUBY_HOME/lib/jruby-truffle.jar"
+        ruby_args=("${ruby_args[@]}" "-X+T")
+        USING_TRUFFLE="true"
+        ;;
+     # Match -Xa.b.c=d to translate to -Da.b.c=d as a java option
+     -X*)
+        val=${1:2}
+        if expr "$val" : '.*[.]' > /dev/null; then
+          java_args=("${java_args[@]}" "-Djruby.${val}")
+        else
+          ruby_args=("${ruby_args[@]}" "-X${val}")
         fi
         ;;
      # Match switches that take an argument
@@ -240,31 +271,40 @@ do
      # Run under JDB
      --jdb)
         if [ -z "$JAVA_HOME" ] ; then
-          JAVA_CMD='jdb'
+          JAVACMD='jdb'
         else
           if $cygwin; then
-            JAVA_CMD="`cygpath -u "$JAVA_HOME"`/bin/jdb"
+            JAVACMD="`cygpath -u "$JAVA_HOME"`/bin/jdb"
           else
-            JAVA_CMD="$JAVA_HOME/bin/jdb"
+            JAVACMD="$JAVA_HOME/bin/jdb"
           fi
         fi 
-        java_args=("${java_args[@]}" "-sourcepath" "$JRUBY_HOME/lib/ruby/1.8:.")
+        java_args=("${java_args[@]}" "-sourcepath" "$JRUBY_HOME/lib/ruby/1.9:.")
         JRUBY_OPTS=("${JRUBY_OPTS[@]}" "-X+C") ;;
      --client)
         JAVA_VM=-client ;;
      --server)
         JAVA_VM=-server ;;
+     --dev)
+        JAVA_VM=-client
+        JAVA_OPTS="$JAVA_OPTS -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -Djruby.compile.mode=OFF -Djruby.compile.invokedynamic=false" ;;
      --noclient)         # JRUBY-4296
         unset JAVA_VM ;; # For IBM JVM, neither '-client' nor '-server' is applicable
      --sample)
         java_args=("${java_args[@]}" "-Xprof") ;;
      --ng-server)
         # Start up as Nailgun server
-        java_class=com.martiansoftware.nailgun.NGServer
+        java_class=$JAVA_CLASS_NGSERVER
         VERIFY_JRUBY=true ;;
      --ng)
         # Use native Nailgun client to toss commands to server
         process_special_opts "--ng" ;;
+     # warn but ignore
+     --1.8) echo "warning: --1.8 ignored" ;;
+     # warn but ignore
+     --1.9) echo "warning: --1.9 ignored" ;;
+     # warn but ignore
+     --2.0) echo "warning: --1.9 ignored" ;;
      # Abort processing on the double dash
      --) break ;;
      # Other opts go to ruby
@@ -280,9 +320,6 @@ if [[ $darwin && -z "$JAVA_ENCODING" ]]; then
   java_args=("${java_args[@]}" "-Dfile.encoding=UTF-8")
 fi
 
-# Add a property to report memory max
-JAVA_OPTS="$JAVA_OPTS $JAVA_VM -Djruby.memory.max=${JAVA_MEM:4} -Djruby.stack.max=${JAVA_STACK:4}"
-
 # Append the rest of the arguments
 ruby_args=("${ruby_args[@]}" "$@")
 
@@ -291,22 +328,12 @@ set -- "${ruby_args[@]}"
 
 JAVA_OPTS="$JAVA_OPTS $JAVA_MEM $JAVA_MEM_MIN $JAVA_STACK"
 
-JFFI_BOOT=""
-if [ -d $JRUBY_HOME/lib/native/ ]; then
-  for d in $JRUBY_HOME/lib/native/*`uname -s`; do
-    if [ -z "$JFFI_BOOT" ]; then
-      JFFI_BOOT="$d"
-    else
-      JFFI_BOOT="$JFFI_BOOT:$d"
-    fi
-  done
-fi
-JFFI_OPTS="-Djffi.boot.library.path=$JFFI_BOOT"
+JFFI_OPTS="-Djffi.boot.library.path=$JRUBY_HOME/lib/jni"
 
 if $cygwin; then
   JRUBY_HOME=`cygpath --mixed "$JRUBY_HOME"`
   JRUBY_SHELL=`cygpath --mixed "$JRUBY_SHELL"`
-  
+
   if [[ ( "${1:0:1}" = "/" ) && ( ( -f "$1" ) || ( -d "$1" )) ]]; then
     win_arg=`cygpath -w "$1"`
     shift
@@ -324,22 +351,27 @@ fi
 
 if [ "$nailgun_client" != "" ]; then
   if [ -f $JRUBY_HOME/tool/nailgun/ng ]; then
-    exec $JRUBY_HOME/tool/nailgun/ng org.jruby.util.NailMain "$@"
+    exec $JRUBY_HOME/tool/nailgun/ng org.jruby.util.NailMain $mode "$@"
   else
     echo "error: ng executable not found; run 'make' in ${JRUBY_HOME}/tool/nailgun"
     exit 1
   fi
 else
-if [ "$VERIFY_JRUBY" != "" ]; then
+if [[ "$VERIFY_JRUBY" != "" && -z "$USING_TRUFFLE" ]]; then
   if [ "$PROFILE_ARGS" != "" ]; then
       echo "Running with instrumented profiler"
   fi
 
-  "$JAVA_CMD" $PROFILE_ARGS $JAVA_OPTS "$JFFI_OPTS" "${java_args[@]}" -classpath "$JRUBY_CP$CP_DELIMITER$CP$CP_DELIMITER$CLASSPATH" \
+  if [[ "${java_class:-}" == "${JAVA_CLASS_NGSERVER:-}" && -n "${JRUBY_OPTS:-}" ]]; then
+    echo "warning: starting a nailgun server; discarding JRUBY_OPTS: ${JRUBY_OPTS}"
+    JRUBY_OPTS=''
+  fi
+
+  "$JAVACMD" $PROFILE_ARGS $JAVA_OPTS "$JFFI_OPTS" "${java_args[@]}" -classpath "$JRUBY_CP$CP_DELIMITER$CP$CP_DELIMITER$CLASSPATH" \
     "-Djruby.home=$JRUBY_HOME" \
     "-Djruby.lib=$JRUBY_HOME/lib" -Djruby.script=jruby \
     "-Djruby.shell=$JRUBY_SHELL" \
-    $java_class "$@"
+    $java_class $mode "$@"
 
   # Record the exit status immediately, or it will be overridden.
   JRUBY_STATUS=$?
@@ -358,11 +390,11 @@ if [ "$VERIFY_JRUBY" != "" ]; then
 else
   if $cygwin; then
     # exec doed not work correctly with cygwin bash
-    "$JAVA_CMD" $JAVA_OPTS "$JFFI_OPTS" "${java_args[@]}" -Xbootclasspath/a:"$JRUBY_CP" -classpath "$CP$CP_DELIMITER$CLASSPATH" \
+    "$JAVACMD" $JAVA_OPTS "$JFFI_OPTS" "${java_args[@]}" -Xbootclasspath/a:"$JRUBY_CP" -classpath "$CP$CP_DELIMITER$CLASSPATH" \
       "-Djruby.home=$JRUBY_HOME" \
       "-Djruby.lib=$JRUBY_HOME/lib" -Djruby.script=jruby \
       "-Djruby.shell=$JRUBY_SHELL" \
-      $java_class "$@"
+      $java_class $mode "$@"
 
     # Record the exit status immediately, or it will be overridden.
     JRUBY_STATUS=$?
@@ -371,11 +403,11 @@ else
 
     exit $JRUBY_STATUS
   else
-    exec "$JAVA_CMD" $JAVA_OPTS "$JFFI_OPTS" "${java_args[@]}" -Xbootclasspath/a:"$JRUBY_CP" -classpath "$CP$CP_DELIMITER$CLASSPATH" \
+    exec "$JAVACMD" $JAVA_OPTS "$JFFI_OPTS" "${java_args[@]}" -Xbootclasspath/a:"$JRUBY_CP" -classpath "$CP$CP_DELIMITER$CLASSPATH" \
       "-Djruby.home=$JRUBY_HOME" \
       "-Djruby.lib=$JRUBY_HOME/lib" -Djruby.script=jruby \
       "-Djruby.shell=$JRUBY_SHELL" \
-      $java_class "$@"
+      $java_class $mode "$@"
   fi
 fi
 fi

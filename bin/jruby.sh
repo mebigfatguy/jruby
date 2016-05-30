@@ -52,14 +52,14 @@ fi
 
 JRUBY_OPTS_SPECIAL="--ng" # space-separated list of special flags
 unset JRUBY_OPTS_TEMP
-function process_special_opts {
+process_special_opts() {
     case $1 in
         --ng) nailgun_client=true;;
         *) break;;
     esac
 }
-for opt in ${JRUBY_OPTS[@]}; do
-    for special in ${JRUBY_OPTS_SPECIAL[@]}; do
+for opt in ${JRUBY_OPTS}; do
+    for special in ${JRUBY_OPTS_SPECIAL}; do
         if [ $opt != $special ]; then
             JRUBY_OPTS_TEMP="${JRUBY_OPTS_TEMP} $opt"
         else
@@ -73,15 +73,17 @@ for opt in ${JRUBY_OPTS[@]}; do
 done
 JRUBY_OPTS=${JRUBY_OPTS_TEMP}
 
-if [ -z "$JAVA_HOME" ] ; then
-  JAVA_CMD='java'
-else
-  JAVA_CMD="$JAVA_HOME/bin/java"
+if [ -z "$JAVACMD" ] ; then
+  if [ -z "$JAVA_HOME" ] ; then
+    JAVACMD='java'
+  else
+    JAVACMD="$JAVA_HOME/bin/java"
+  fi
 fi
 
 # If you're seeing odd exceptions, you may have a bad JVM install.
 # Uncomment this and report the version to the JRuby team along with error.
-#$JAVA_CMD -version
+#$JAVACMD -version
 
 JRUBY_SHELL=/bin/sh
 
@@ -105,7 +107,6 @@ for j in "$JRUBY_HOME"/lib/jruby.jar "$JRUBY_HOME"/lib/jruby-complete.jar; do
     JRUBY_ALREADY_ADDED=true
 done
 
-
 # ----- Set Up The System Classpath -------------------------------------------
 
 if [ "$JRUBY_PARENT_CLASSPATH" != "" ]; then
@@ -115,6 +116,9 @@ else
     # add other jars in lib to CP for command-line execution
     for j in "$JRUBY_HOME"/lib/*.jar; do
         if [ "$j" == "$JRUBY_HOME"/lib/jruby.jar ]; then
+          continue
+        fi
+        if [ "$j" == "$JRUBY_HOME"/lib/jruby-truffle.jar ]; then
           continue
         fi
         if [ "$j" == "$JRUBY_HOME"/lib/jruby-complete.jar ]; then
@@ -137,16 +141,20 @@ if [ -z "$JAVA_MEM" ] ; then
 fi
 
 if [ -z "$JAVA_STACK" ] ; then
-  JAVA_STACK=-Xss1024k
+  JAVA_STACK=-Xss2048k
 fi
 
-JAVA_VM=-client
+if [ -z "$JAVA_VM" ]; then
+  JAVA_VM=-client
+fi
 JAVA_ENCODING=""
 
 #declare -a java_args
 #declare -a ruby_args
 
-java_class=org.jruby.Main
+JAVA_CLASS_JRUBY_MAIN=org.jruby.Main
+java_class=$JAVA_CLASS_JRUBY_MAIN
+JAVA_CLASS_NGSERVER=com.martiansoftware.nailgun.NGServer
 
 # Split out any -J argument for passing to the JVM.
 # Scanning for args is aborted by '--'.
@@ -161,11 +169,11 @@ do
         elif [ "${val:0:4}" = "-Xss" ]; then
             JAVA_STACK=$val
         elif [ "${val}" = "" ]; then
-            $JAVA_CMD -help
+            $JAVACMD -help
             echo "(Prepend -J in front of these options when using 'jruby' command)" 
             exit
         elif [ "${val}" = "-X" ]; then
-            $JAVA_CMD -X
+            $JAVACMD -X
             echo "(Prepend -J in front of these options when using 'jruby' command)" 
             exit
         elif [ "${val}" = "-classpath" ]; then
@@ -185,6 +193,22 @@ do
             java_args="${java_args} ${1:2}"
         fi
         ;;
+     # Pass -X... and -X? search options through
+     -X*\.\.\.|-X*\?)
+        ruby_args="${ruby_args} $1" ;;
+     -X+T)
+      JRUBY_CP="$JRUBY_CP$CP_DELIMITER$JRUBY_HOME/lib/jruby-truffle.jar"
+      ruby_args="${ruby_args} -X+T"
+      ;;
+     # Match -Xa.b.c=d to translate to -Da.b.c=d as a java option
+     -X*)
+     val=${1:2}
+     if expr "$val" : '.*[.]' > /dev/null; then
+       java_args="${java_args} -Djruby.${val}"
+     else
+       ruby_args="${ruby_args} -X${val}"
+     fi
+     ;;
      # Match switches that take an argument
      -C|-e|-I|-S) ruby_args="${ruby_args} $1 $2"; shift ;;
      # Match same switches with argument stuck together
@@ -199,11 +223,11 @@ do
      # Run under JDB
      --jdb)
         if [ -z "$JAVA_HOME" ] ; then
-          JAVA_CMD='jdb'
+          JAVACMD='jdb'
         else
-          JAVA_CMD="$JAVA_HOME/bin/jdb"
+          JAVACMD="$JAVA_HOME/bin/jdb"
         fi 
-        java_args="${java_args} -sourcepath $JRUBY_HOME/lib/ruby/1.8:."
+        java_args="${java_args} -sourcepath $JRUBY_HOME/lib/ruby/1.9:."
         JRUBY_OPTS="${JRUBY_OPTS} -X+C" ;;
      --client)
         JAVA_VM=-client ;;
@@ -215,7 +239,7 @@ do
         java_args="${java_args} -Xprof" ;;
      --ng-server)
         # Start up as Nailgun server
-        java_class=com.martiansoftware.nailgun.NGServer
+        java_class=$JAVA_CLASS_NGSERVER
         VERIFY_JRUBY=true ;;
      --ng)
         # Use native Nailgun client to toss commands to server
@@ -235,28 +259,15 @@ if [[ -z "$JAVA_ENCODING" ]]; then
   java_args="${java_args} -Dfile.encoding=UTF-8"
 fi
 
-# Add a property to report memory max
-JAVA_OPTS="$JAVA_OPTS $JAVA_VM -Djruby.memory.max=${JAVA_MEM} -Djruby.stack.max=${JAVA_STACK}"
-
 # Append the rest of the arguments
 ruby_args="${ruby_args} $@"
 
 # Put the ruby_args back into the position arguments $1, $2 etc
 set -- "${ruby_args}"
 
-JAVA_OPTS="$JAVA_OPTS $JAVA_MEM $JAVA_STACK"
+JAVA_OPTS="$JAVA_OPTS $JAVA_VM $JAVA_MEM $JAVA_STACK"
 
-JFFI_BOOT=""
-if [ -d $JRUBY_HOME/lib/native/ ]; then
-  for d in $JRUBY_HOME/lib/native/*`uname -s`; do
-    if [ -z "$JFFI_BOOT" ]; then
-      JFFI_BOOT="$d"
-    else
-      JFFI_BOOT="$JFFI_BOOT:$d"
-    fi
-  done
-fi
-JFFI_OPTS="-Djffi.boot.library.path=$JFFI_BOOT"
+JFFI_OPTS="-Djffi.boot.library.path=$JRUBY_HOME/lib/jni"
 
 
 if [ "$nailgun_client" != "" ]; then
@@ -272,11 +283,17 @@ if [ "$VERIFY_JRUBY" != "" ]; then
       echo "Running with instrumented profiler"
   fi
 
-  "$JAVA_CMD" $PROFILE_ARGS $JAVA_OPTS "$JFFI_OPTS" "${java_args[@]}" -classpath "$JRUBY_CP$CP_DELIMITER$CP$CP_DELIMITER$CLASSPATH" \
+  if [ $java_class = $JAVA_CLASS_NGSERVER -a -n "${JRUBY_OPTS}" ]; then
+    echo "warning: starting a nailgun server; discarding JRUBY_OPTS: ${JRUBY_OPTS}"
+    JRUBY_OPTS=''
+  fi
+
+
+  "$JAVACMD" $PROFILE_ARGS $JAVA_OPTS "$JFFI_OPTS" ${java_args} -classpath "$JRUBY_CP$CP_DELIMITER$CP$CP_DELIMITER$CLASSPATH" \
     "-Djruby.home=$JRUBY_HOME" \
     "-Djruby.lib=$JRUBY_HOME/lib" -Djruby.script=jruby \
     "-Djruby.shell=$JRUBY_SHELL" \
-    $java_class $JRUBY_OPTS "$@"
+    $java_class $JRUBY_OPTS $@
 
   # Record the exit status immediately, or it will be overridden.
   JRUBY_STATUS=$?
@@ -290,7 +307,7 @@ if [ "$VERIFY_JRUBY" != "" ]; then
 
   exit $JRUBY_STATUS
 else
-  exec $JAVA_CMD $JAVA_OPTS $JFFI_OPTS ${java_args} -Xbootclasspath/a:$JRUBY_CP -classpath $CP$CP_DELIMITER$CLASSPATH \
+  exec $JAVACMD $JAVA_OPTS $JFFI_OPTS ${java_args} -Xbootclasspath/a:$JRUBY_CP -classpath $CP$CP_DELIMITER$CLASSPATH \
       -Djruby.home=$JRUBY_HOME \
       -Djruby.lib=$JRUBY_HOME/lib -Djruby.script=jruby \
       -Djruby.shell=$JRUBY_SHELL \

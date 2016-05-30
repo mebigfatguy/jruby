@@ -1,6 +1,7 @@
 require 'socket'
 require 'timeout'
 require 'fcntl'
+require 'rbconfig'
 
 describe "nonblocking IO blocking behavior: JRUBY-5122" do
   Socket.do_not_reverse_lookup = true
@@ -18,7 +19,7 @@ describe "nonblocking IO blocking behavior: JRUBY-5122" do
     wait_for_sleep_and_terminate(t) do
       s.write("foo\r\n")
     end
-    value.should == "foo\r\n"
+    expect(value).to eq("foo\r\n")
   end
 
   it "should not block for eof" do
@@ -32,7 +33,7 @@ describe "nonblocking IO blocking behavior: JRUBY-5122" do
     wait_for_sleep_and_terminate(t) do
       s.write("foo\r\n")
     end
-    value.should == false
+    expect(value).to eq(false)
   end
 
   it "should not block for getc" do
@@ -46,7 +47,7 @@ describe "nonblocking IO blocking behavior: JRUBY-5122" do
     wait_for_sleep_and_terminate(t) do
       s.write("f")
     end
-    value.should == ?f
+    expect(value).to eq(?f)
   end
 
   it "should not block for readlines" do
@@ -61,7 +62,7 @@ describe "nonblocking IO blocking behavior: JRUBY-5122" do
       s.write("foo\r\nbar\r\n")
       s.close
     end
-    value.should == ["foo\r\n", "bar\r\n"]
+    expect(value).to eq(["foo\r\n", "bar\r\n"])
   end
 
   it "should not block for read" do
@@ -76,7 +77,7 @@ describe "nonblocking IO blocking behavior: JRUBY-5122" do
       s.write("foo\r\nbar\r\nbaz")
       s.close
     end
-    value.should == "foo\r\nbar\r\nbaz"
+    expect(value).to eq("foo\r\nbar\r\nbaz")
   end
 
   it "should not block for read(n) where n is shorter than the buffer" do
@@ -88,10 +89,10 @@ describe "nonblocking IO blocking behavior: JRUBY-5122" do
     }
     s = connect(server)
     wait_for_sleep_and_terminate(t) do
-      t.alive?.should == true
+      expect(t.alive?).to eq(true)
       s.write("foo\r\n")
     end
-    value.should == "fo"
+    expect(value).to eq("fo")
   end
 
   it "should not block for read(n) where n is longer than the buffer" do
@@ -103,12 +104,12 @@ describe "nonblocking IO blocking behavior: JRUBY-5122" do
     }
     s = connect(server)
     wait_for_sleep_and_terminate(t) do
-      t.alive?.should == true
+      expect(t.alive?).to eq(true)
       s.write("f")
-      t.alive?.should == true
+      expect(t.alive?).to eq(true)
       s.write("oo\r\n")
     end
-    value.should == "foo\r"
+    expect(value).to eq("foo\r")
   end
 
   it "should read 4 bytes for read(4)" do
@@ -125,7 +126,7 @@ describe "nonblocking IO blocking behavior: JRUBY-5122" do
       s.write("1")
       s.write("2345")
       t.join
-      value.should == "1234"
+      expect(value).to eq("1234")
     end
   end
 
@@ -138,10 +139,10 @@ describe "nonblocking IO blocking behavior: JRUBY-5122" do
     }
     s = connect(server)
     wait_for_sleep_and_terminate(t) do
-      t.alive?.should == true
+      expect(t.alive?).to eq(true)
       s.write("foo\r\n")
     end
-    value.should == "fo"
+    expect(value).to eq("fo")
   end
 
   it "should not block for sysread" do
@@ -153,21 +154,10 @@ describe "nonblocking IO blocking behavior: JRUBY-5122" do
     }
     s = connect(server)
     wait_for_sleep_and_terminate(t) do
-      t.alive?.should == true
+      expect(t.alive?).to eq(true)
       s.write("foo\r\n")
     end
-    value.should == "fo"
-  end
-
-  it "should not block for sysread in ST condition" do
-    server = TCPServer.new(0)
-    client = TCPSocket.new('localhost', server.addr[1])
-    sock = accept(server)
-    begin
-      sock.read_nonblock(5)
-    rescue SystemCallError => e
-      [Errno::EAGAIN, Errno::EWOULDBLOCK].include?(e.class).should == true
-    end
+    expect(value).to eq("fo")
   end
 
   it "should not block for each_byte" do
@@ -181,11 +171,11 @@ describe "nonblocking IO blocking behavior: JRUBY-5122" do
     }
     s = connect(server)
     wait_for_sleep_and_terminate(t) do
-      t.alive?.should == true
+      expect(t.alive?).to eq(true)
       s.write("foobar")
       s.close
     end
-    value.should == 114
+    expect(value).to eq(114)
   end
 
   it "should not block for each_line" do
@@ -199,52 +189,85 @@ describe "nonblocking IO blocking behavior: JRUBY-5122" do
     }
     s = connect(server)
     wait_for_sleep_and_terminate(t) do
-      t.alive?.should == true
+      expect(t.alive?).to eq(true)
       s.write("foo\r\nbar\r\nbaz")
       s.close
     end
-    value.should == "baz"
+    expect(value).to eq("baz")
   end
 
+  # WRITE BLOCKAGE:
+  #
+  # We try to pick a suitably large value such that potentially-blocking
+  # writes are more likely to reach buffer limits and actually block.
+  #
   # On an Ubuntu 10.10(64) box:
   #   Packaged OpenJDK6 block with > 152606 (?)
   #   Oracle's build block with > 131072 (2**17)
   # On a Windows 7(64) box:
   #   Oracle's build does not block (use memory till OOMException)
-  SOCKET_CHANNEL_MIGHT_BLOCK = "a" * (65536 * 4)
+  SOCKET_CHANNEL_MIGHT_BLOCK = "a" * (219463 * 4)
 
+# This spec does not appear to test anything meaningful and occasionally
+# failed due to several inherent races. I improved the race situation
+# somewhat, but it's unclear whether this spec can ever fail since it
+# appears to accept both blocking and nonblocking write.
+#
+# I believe the spec originally expected small writes not to block, which
+# is reasonable, but at some point it mutated into a test that write
+# *does* block under certain circumstances, making the original assertions
+# meaningless.
+#
+# See jruby/jruby#2332
+
+=begin
   it "should not block for write" do
-  100.times do # for acceleration; it failed w/o wait_for_accepted call
-    server = TCPServer.new(0)
-    value = nil
-    t = Thread.new {
-      sock = accept(server)
-      begin
-        value = 1
-        # this could block; [ruby-dev:26405]  But it doesn't block on Windows.
-        sock.write(SOCKET_CHANNEL_MIGHT_BLOCK)
-        value = 2
-      rescue RuntimeError
-        value = 3
-      end
-    }
-    s = connect(server)
-    type = nil
-    wait_for_sleep_and_terminate(t) do
-      if value == 1
-        type = :blocked
-        t.raise # help thread termination
-      else
-        value.should == 2
-        t.status.should == false
+    100.times do # for acceleration; it failed w/o wait_for_accepted call
+      server = TCPServer.new(0)
+      value = nil
+      t = Thread.new {
+        sock = accept(server)
+        begin
+          value = 1
+          # this could block; [ruby-dev:26405]  But it doesn't block on Windows.
+          sock.write(SOCKET_CHANNEL_MIGHT_BLOCK)
+          value = 2
+        rescue RuntimeError
+          value = 3
+        end
+      }
+      s = connect(server)
+
+      # Whether write blocks or not, read will block until data is available
+      IO.select([s], nil, nil, 2)
+
+      # If write did not block, give thread some time to advance
+      100.times { Thread.pass }
+
+      # Now check where we are
+      wait_for_sleep_and_terminate(t) do
+        if value == 1
+
+          # Write blocked [ruby-dev:26405], see WRITE BLOCKAGE above
+          type = :blocked
+          t.raise # help thread termination
+          t.join
+
+          if RbConfig::CONFIG['host_os'] !~ /mingw|mswin/
+            value.should == 3
+            t.status.should == false
+          end
+
+        else
+
+          # Write did not block
+          value.should == 2
+          t.status.should == false
+        end
       end
     end
-    if type == :blocked
-      value.should == 3
-      t.status.should == false
-    end
   end
-  end
+=end
 
   it "should not block for write_nonblock" do
     server = TCPServer.new(0)
@@ -255,7 +278,7 @@ describe "nonblocking IO blocking behavior: JRUBY-5122" do
     }
     s = connect(server)
     wait_for_terminate(t)
-    value.should > 0
+    expect(value).to be > 0
   end
 
   def accept(server)

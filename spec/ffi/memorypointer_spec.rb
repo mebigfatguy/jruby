@@ -1,23 +1,31 @@
-require 'ffi'
-require 'java'
+#
+# This file is part of ruby-ffi.
+# For licensing, see LICENSE.SPECS
+#
+
+require File.expand_path(File.join(File.dirname(__FILE__), "spec_helper"))
 
 MemoryPointer = FFI::MemoryPointer
 
 describe "MemoryPointer#total" do
   it "MemoryPointer.new(:char, 1).total == 1" do
-    MemoryPointer.new(:char, 1).total.should == 1
+    expect(MemoryPointer.new(:char, 1).total).to eq 1
   end
+
   it "MemoryPointer.new(:short, 1).total == 2" do
-    MemoryPointer.new(:short, 1).total.should == 2
+    expect(MemoryPointer.new(:short, 1).total).to eq 2
   end
+
   it "MemoryPointer.new(:int, 1).total == 4" do
-    MemoryPointer.new(:int, 1).total.should == 4
+    expect(MemoryPointer.new(:int, 1).total).to eq 4
   end
+
   it "MemoryPointer.new(:long_long, 1).total == 8" do
-    MemoryPointer.new(:long_long, 1).total.should == 8
+    expect(MemoryPointer.new(:long_long, 1).total).to eq 8
   end
+
   it "MemoryPointer.new(1024).total == 1024" do
-    MemoryPointer.new(1024).total.should == 1024
+    expect(MemoryPointer.new(1024).total).to eq 1024
   end
 end
 describe "MemoryPointer#read_array_of_long" do
@@ -26,8 +34,8 @@ describe "MemoryPointer#read_array_of_long" do
     ptr[0].write_long 1234
     ptr[1].write_long 5678
     l = ptr.read_array_of_long(2)
-    l[0].should == 1234
-    l[1].should == 5678
+    expect(l[0]).to eq 1234
+    expect(l[1]).to eq 5678
   end
 end
 describe "MemoryPointer argument" do
@@ -37,17 +45,20 @@ describe "MemoryPointer argument" do
     attach_function :memset, [ :pointer, :int, :ulong ], :pointer
     attach_function :memcpy, [ :pointer, :pointer, :ulong ], :pointer
   end
+
   it "Pointer passed correctly" do
     p = MemoryPointer.new :int, 1
     ret = Ptr.memset(p, 0, p.total)
-    ret.should == p
+    expect(ret).to eq p
   end
+
   it "Data passed to native function" do
     p = MemoryPointer.new :int, 1
     p2 = MemoryPointer.new :int, 1
-    p2.put_int(0, 0xdeadbeef)
+    p2.put_int(0, 0x5eadbeef)
     Ptr.memcpy(p, p2, p.total)
-    p.get_int(0).should == p2.get_int(0)
+    expect(p.get_int(0)).to eq p2.get_int(0)
+    expect(p2.get_int(0)).not_to eql 0
   end
 end
 describe "MemoryPointer return value" do
@@ -58,9 +69,10 @@ describe "MemoryPointer return value" do
     attach_function :fclose, [ :pointer ], :int
     attach_function :fwrite, [ :pointer, :ulong, :ulong, :string ], :ulong
   end
+
   it "fopen returns non-nil" do
     fp = Stdio.fopen("/dev/null", "w")
-    fp.should_not be_nil
-    Stdio.fclose(fp).should == 0 unless fp.nil? or fp.null? 
+    expect(fp).to_not be_nil
+    expect(Stdio.fclose(fp)).to  eq 0 unless fp.nil? or fp.null? 
   end
 end

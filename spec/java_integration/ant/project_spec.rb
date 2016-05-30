@@ -1,25 +1,26 @@
 require File.expand_path('../../ant_spec_helper', __FILE__)
 
-describe Ant, "project", :type => :ant do
+describe Ant, "project" do
+  include Ant::RSpec::AntExampleGroup
   before :each do
     @ant = example_ant :name => "spec project", :description => "spec description"
   end
 
   it "should have the 'basedir' set" do
     # expand_path is used to avoid / and \\ mismatch on Windows
-    File.expand_path(@ant.project.base_dir.path).should == Dir::tmpdir
+    expect(File.expand_path(@ant.project.base_dir.path)).to eq(Dir::tmpdir)
   end
 
   it "should have a project helper created" do
-    @ant.project.get_reference(Ant::ProjectHelper::PROJECTHELPER_REFERENCE).should be_kind_of(Ant::ProjectHelper)
+    expect(@ant.project.get_reference(Ant::ProjectHelper::PROJECTHELPER_REFERENCE)).to be_kind_of(Ant::ProjectHelper)
   end
 
   it "should have a logger set" do
-    @ant.project.build_listeners.should_not be_empty
+    expect(@ant.project.build_listeners).to_not be_empty
   end
 
   it "should have a name and description" do
-    @ant.project.name.should == "spec project"
-    @ant.project.description.should == "spec description"
+    expect(@ant.project.name).to eq("spec project")
+    expect(@ant.project.description).to eq("spec description")
   end
 end

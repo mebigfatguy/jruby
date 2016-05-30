@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<install4j version="4.2.7" transformSequenceNumber="2">
-  <directoryPresets config="" />
-  <application name="JRuby" distributionSourceDir="" applicationId="4535-5096-5383-5182" mediaDir="../build/installers" mediaFilePattern="" compression="9" lzmaCompression="false" pack200Compression="true" excludeSignedFromPacking="true" keepModificationTimes="false" missingFilesStrategy="warn" shortName="jruby" publisher="JRuby Dev Team" publisherWeb="http://www.jruby.org/" version="${compiler:jruby.version}" allPathsRelative="true" backupOnSave="false" autoSave="false" convertDotsToUnderscores="true" macSignature="????" installerName="" javaMinVersion="1.5" javaMaxVersion="" allowBetaVM="false" jdkMode="runtimeJre" jdkName="">
+<install4j version="4.2.8" transformSequenceNumber="2">
+  <directoryPresets config="." />
+  <application name="JRuby" distributionSourceDir="" applicationId="4535-5096-5383-5182" mediaDir="." mediaFilePattern="${compiler:sys.shortName}_${compiler:sys.platform}_${compiler:sys.version}" compression="9" lzmaCompression="false" pack200Compression="true" excludeSignedFromPacking="true" keepModificationTimes="false" missingFilesStrategy="warn" shortName="jruby" publisher="JRuby Dev Team" publisherWeb="http://www.jruby.org/" version="${compiler:jruby.version}" allPathsRelative="true" backupOnSave="false" autoSave="false" convertDotsToUnderscores="true" macSignature="????" installerName="" javaMinVersion="1.5" javaMaxVersion="" allowBetaVM="false" jdkMode="runtimeJre" jdkName="">
     <languages skipLanguageSelection="false" languageSelectionInPrincipalLanguage="false">
       <principalLanguage id="en" customLocalizationFile="" />
       <additionalLanguages />
@@ -13,24 +13,30 @@
     </searchSequence>
     <variables>
       <variable name="jruby.version" value="error" />
+      <variable name="ruby.version" value="error" />
+      <variable name="ruby.patchlevel" value="error" />
+      <variable name="ruby.buildplatform" value="error" />
     </variables>
   </application>
   <files>
     <filesets>
       <fileset name="non-arch ruby lib" id="97" />
       <fileset name="windows arch-specific" id="99" />
+      <fileset name="macos arch-specific" id="201" />
     </filesets>
     <roots>
       <root id="98" fileset="97" location="" />
       <root id="100" fileset="99" location="" />
+      <root id="202" fileset="201" location="" />
     </roots>
     <mountPoints>
       <mountPoint id="19" root="" location="" mode="755" />
       <mountPoint id="102" root="98" location="" mode="755" />
       <mountPoint id="103" root="100" location="" mode="755" />
+      <mountPoint id="203" root="202" location="" mode="755" />
     </mountPoints>
     <entries>
-      <dirEntry mountPoint="19" file=".." overwrite="2" shared="false" mode="644" uninstallMode="0" excludeSuffixes=".git, .gitignore, .svn, .cvsignore" dirMode="755">
+      <dirEntry mountPoint="19" file="${compiler:jruby.location}" overwrite="2" shared="false" mode="644" uninstallMode="0" excludeSuffixes=".git, .gitignore, .svn, .cvsignore" dirMode="755">
         <exclude>
           <entry location=".classpath" fileType="regular" />
           <entry location=".externalToolBuilders" fileType="regular" />
@@ -48,11 +54,12 @@
           <entry location="docs/.cvsignore" fileType="regular" />
           <entry location="docs/rdocs.tar.gz" fileType="regular" />
           <entry location="findbugs.xml" fileType="regular" />
-          <entry location="gem" fileType="regular" />
+          <entry location="gems" fileType="regular" />
           <entry location="install" fileType="regular" />
           <entry location="ivy" fileType="regular" />
           <entry location="jruby.bnd.template" fileType="regular" />
           <entry location="lib/.cvsignore" fileType="regular" />
+          <entry location="lib/jni" fileType="regular" />
           <entry location="lib/ruby" fileType="regular" />
           <entry location="maven" fileType="regular" />
           <entry location="nbproject" fileType="regular" />
@@ -64,34 +71,90 @@
           <entry location="share" fileType="regular" />
           <entry location="spec" fileType="regular" />
           <entry location="src" fileType="regular" />
-          <entry location="src_gen" fileType="regular" />
           <entry location="test" fileType="regular" />
           <entry location="tool" fileType="regular" />
         </exclude>
       </dirEntry>
-      <dirEntry mountPoint="102" file="../dist/jruby-bin-${compiler:jruby.version}" overwrite="2" shared="false" mode="644" uninstallMode="0" excludeSuffixes="" dirMode="755">
+      <dirEntry mountPoint="102" file="${compiler:jruby.location}" overwrite="2" shared="false" mode="644" uninstallMode="0" excludeSuffixes="" dirMode="755">
         <exclude>
-          <entry location="lib/native" fileType="regular" />
+          <entry location="bin/jruby" fileType="regular" />
+          <entry location="lib/jni" fileType="regular" />
         </exclude>
       </dirEntry>
-      <dirEntry mountPoint="103" file="../dist/jruby-bin-${compiler:jruby.version}" overwrite="2" shared="false" mode="644" uninstallMode="0" excludeSuffixes="" dirMode="755">
+      <dirEntry mountPoint="103" file="${compiler:jruby.location}" overwrite="2" shared="false" mode="644" uninstallMode="0" excludeSuffixes="" dirMode="755">
         <exclude>
           <entry location="bin" fileType="regular" />
-          <entry location="lib/native/Darwin" fileType="regular" />
-          <entry location="lib/native/i386-FreeBSD" fileType="regular" />
-          <entry location="lib/native/i386-Linux" fileType="regular" />
-          <entry location="lib/native/ppc-Linux" fileType="regular" />
-          <entry location="lib/native/sparc-SunOS" fileType="regular" />
-          <entry location="lib/native/sparcv9-SunOS" fileType="regular" />
-          <entry location="lib/native/x86_64-FreeBSD" fileType="regular" />
-          <entry location="lib/native/x86_64-Linux" fileType="regular" />
+          <entry location="lib/jni/Darwin" fileType="regular" />
+          <entry location="lib/jni/arm-Linux" fileType="regular" />
+          <entry location="lib/jni/i386-Linux" fileType="regular" />
+          <entry location="lib/jni/i386-SunOS" fileType="regular" />
+          <entry location="lib/jni/i386-FreeBSD" fileType="regular" />
+          <entry location="lib/jni/i386-OpenBSD" fileType="regular" />
+          <entry location="lib/jni/ppc-AIX" fileType="regular" />
+          <entry location="lib/jni/ppc64-Linux" fileType="regular" />
+          <entry location="lib/jni/ppc64le-Linux" fileType="regular" />
+          <entry location="lib/jni/ppc-Linux" fileType="regular" />
+          <entry location="lib/jni/s390x-Linux" fileType="regular" />
+          <entry location="lib/jni/sparc-SunOS" fileType="regular" />
+          <entry location="lib/jni/sparcv9-SunOS" fileType="regular" />
+          <entry location="lib/jni/x86_64-FreeBSD" fileType="regular" />
+          <entry location="lib/jni/x86_64-Linux" fileType="regular" />
+          <entry location="lib/jni/x86_64-OpenBSD" fileType="regular" />
+          <entry location="lib/jni/x86_64-SunOS" fileType="regular" />
+          <entry location="lib/ruby" fileType="regular" />
+        </exclude>
+      </dirEntry>
+      <dirEntry mountPoint="203" file="${compiler:jruby.location}" overwrite="4" shared="false" mode="644" uninstallMode="0" excludeSuffixes="" dirMode="755">
+        <exclude>
+          <entry location="bin" fileType="regular" />
+          <entry location="lib/jni/arm-Linux" fileType="regular" />
+          <entry location="lib/jni/i386-FreeBSD" fileType="regular" />
+          <entry location="lib/jni/i386-Linux" fileType="regular" />
+          <entry location="lib/jni/i386-OpenBSD" fileType="regular" />
+          <entry location="lib/jni/i386-SunOS" fileType="regular" />
+          <entry location="lib/jni/i386-Windows" fileType="regular" />
+          <entry location="lib/jni/ppc64-Linux" fileType="regular" />
+          <entry location="lib/jni/ppc64le-Linux" fileType="regular" />
+          <entry location="lib/jni/ppc-AIX" fileType="regular" />
+          <entry location="lib/jni/ppc-Linux" fileType="regular" />
+          <entry location="lib/jni/s390x-Linux" fileType="regular" />
+          <entry location="lib/jni/sparc-SunOS" fileType="regular" />
+          <entry location="lib/jni/sparcv9-SunOS" fileType="regular" />
+          <entry location="lib/jni/x86_64-FreeBSD" fileType="regular" />
+          <entry location="lib/jni/x86_64-Linux" fileType="regular" />
+          <entry location="lib/jni/x86_64-OpenBSD" fileType="regular" />
+          <entry location="lib/jni/x86_64-SunOS" fileType="regular" />
+          <entry location="lib/jni/x86_64-Windows" fileType="regular" />
           <entry location="lib/ruby" fileType="regular" />
         </exclude>
       </dirEntry>
     </entries>
     <components />
   </files>
-  <launchers />
+  <launchers>
+    <launcher name="irb (2.3)" id="261" external="false" excludeFromMenu="false" menuName="" icnsFile="" pngIcon16File="./icon16.png" pngIcon32File="./icon32.png" macServiceDependencies="" swtApp="false" fileset="">
+      <executable name="irb (2.3)" type="1" iconSet="true" iconFile="" executableDir="" redirectStderr="true" stderrFile="error.log" stderrMode="overwrite" redirectStdout="false" stdoutFile="output.log" stdoutMode="overwrite" failOnStderrOutput="true" executableMode="1" changeWorkingDirectory="true" workingDirectory="." singleInstance="false" serviceStartType="2" serviceDependencies="" serviceDescription="" jreLocation="" executionLevel="asInvoker" checkConsoleParameter="false" globalSingleInstance="false">
+        <versionInfo include="false" fileVersion="" fileDescription="" legalCopyright="" internalName="" productName="" />
+      </executable>
+      <splashScreen show="false" autoOff="true" alwaysOnTop="true" width="0" height="0" bitmapFile="./jruby-logo.png" java6SplashScreen="false">
+        <text>
+          <statusLine x="20" y="20" text="Loading irb..." font="Arial" fontSize="8" fontColor="0,0,0" fontWeight="500" />
+          <versionLine x="20" y="40" text="version ${compiler:sys.version}" font="Arial" fontSize="8" fontColor="0,0,0" fontWeight="500" />
+        </text>
+      </splashScreen>
+      <java mainClass="org.jruby.Main" vmParameters="&quot;-Djruby.home=${launcher:sys.launcherDirectory}&quot;" arguments="&quot;${launcher:sys.launcherDirectory}/bin/jirb_swing&quot;" allowVMPassthroughParameters="true" preferredVM="" bundleRuntime="true">
+        <classPath>
+          <archive location="lib/jruby.jar" failOnError="false" />
+        </classPath>
+        <nativeLibraryDirectories />
+      </java>
+      <includedFiles />
+      <unextractableFiles />
+      <customScript mode="1" file="">
+        <scriptLines />
+      </customScript>
+    </launcher>
+  </launchers>
   <installerGui installerType="1" suggestPreviousProgramGroup="false" addOnAppId="" suggestPreviousLocations="false">
     <customCode useInstalledFiles="false" />
     <applications>
@@ -353,6 +416,105 @@
                 </serializedBean>
                 <condition />
               </action>
+              <action name="" id="312" beanClass="com.install4j.runtime.beans.actions.registry.SetRegistryValueAction" enabled="true" commentSet="false" comment="" rollbackBarrier="false" multiExec="false" failureStrategy="1" errorMessage="">
+                <serializedBean>
+                  <java class="java.beans.XMLDecoder">
+                    <object class="com.install4j.runtime.beans.actions.registry.SetRegistryValueAction">
+                      <void property="keyName">
+                        <string>Software\RubyInstaller</string>
+                      </void>
+                      <void property="registryRoot">
+                        <object class="com.install4j.api.windows.RegistryRoot" field="HKEY_CURRENT_USER" />
+                      </void>
+                    </object>
+                  </java>
+                </serializedBean>
+                <condition />
+              </action>
+              <action name="" id="314" beanClass="com.install4j.runtime.beans.actions.registry.SetRegistryValueAction" enabled="true" commentSet="false" comment="" rollbackBarrier="false" multiExec="false" failureStrategy="1" errorMessage="">
+                <serializedBean>
+                  <java class="java.beans.XMLDecoder">
+                    <object class="com.install4j.runtime.beans.actions.registry.SetRegistryValueAction">
+                      <void property="keyName">
+                        <string>Software\RubyInstaller\JRuby\${compiler:ruby.version}</string>
+                      </void>
+                      <void property="registryRoot">
+                        <object class="com.install4j.api.windows.RegistryRoot" field="HKEY_CURRENT_USER" />
+                      </void>
+                      <void property="value">
+                        <string>${installer:sys.installationDir}</string>
+                      </void>
+                      <void property="valueName">
+                        <string>InstallLocation</string>
+                      </void>
+                    </object>
+                  </java>
+                </serializedBean>
+                <condition />
+              </action>
+              <action name="" id="315" beanClass="com.install4j.runtime.beans.actions.registry.SetRegistryValueAction" enabled="true" commentSet="false" comment="" rollbackBarrier="false" multiExec="false" failureStrategy="1" errorMessage="">
+                <serializedBean>
+                  <java class="java.beans.XMLDecoder">
+                    <object class="com.install4j.runtime.beans.actions.registry.SetRegistryValueAction">
+                      <void property="keyName">
+                        <string>Software\RubyInstaller\JRuby\${compiler:ruby.version}</string>
+                      </void>
+                      <void property="registryRoot">
+                        <object class="com.install4j.api.windows.RegistryRoot" field="HKEY_CURRENT_USER" />
+                      </void>
+                      <void property="value">
+                        <string>${compiler:sys.date}</string>
+                      </void>
+                      <void property="valueName">
+                        <string>InstallDate</string>
+                      </void>
+                    </object>
+                  </java>
+                </serializedBean>
+                <condition />
+              </action>
+              <action name="" id="316" beanClass="com.install4j.runtime.beans.actions.registry.SetRegistryValueAction" enabled="true" commentSet="false" comment="" rollbackBarrier="false" multiExec="false" failureStrategy="1" errorMessage="">
+                <serializedBean>
+                  <java class="java.beans.XMLDecoder">
+                    <object class="com.install4j.runtime.beans.actions.registry.SetRegistryValueAction">
+                      <void property="keyName">
+                        <string>Software\RubyInstaller\JRuby\${compiler:ruby.version}</string>
+                      </void>
+                      <void property="registryRoot">
+                        <object class="com.install4j.api.windows.RegistryRoot" field="HKEY_CURRENT_USER" />
+                      </void>
+                      <void property="value">
+                        <string>${compiler:ruby.patchlevel}</string>
+                      </void>
+                      <void property="valueName">
+                        <string>PatchLevel</string>
+                      </void>
+                    </object>
+                  </java>
+                </serializedBean>
+                <condition />
+              </action>
+              <action name="" id="317" beanClass="com.install4j.runtime.beans.actions.registry.SetRegistryValueAction" enabled="true" commentSet="false" comment="" rollbackBarrier="false" multiExec="false" failureStrategy="1" errorMessage="">
+                <serializedBean>
+                  <java class="java.beans.XMLDecoder">
+                    <object class="com.install4j.runtime.beans.actions.registry.SetRegistryValueAction">
+                      <void property="keyName">
+                        <string>Software\RubyInstaller\JRuby\${compiler:ruby.version}</string>
+                      </void>
+                      <void property="registryRoot">
+                        <object class="com.install4j.api.windows.RegistryRoot" field="HKEY_CURRENT_USER" />
+                      </void>
+                      <void property="value">
+                        <string>${compiler:ruby.buildplatform}</string>
+                      </void>
+                      <void property="valueName">
+                        <string>BuildPlatform</string>
+                      </void>
+                    </object>
+                  </java>
+                </serializedBean>
+                <condition />
+              </action>
             </actions>
             <formComponents />
           </screen>
@@ -426,6 +588,39 @@
             <preActivation />
             <postActivation />
             <actions>
+              <action name="" id="319" beanClass="com.install4j.runtime.beans.actions.registry.DeleteRegistryItemAction" enabled="true" commentSet="false" comment="" rollbackBarrier="false" multiExec="false" failureStrategy="1" errorMessage="">
+                <serializedBean>
+                  <java class="java.beans.XMLDecoder">
+                    <object class="com.install4j.runtime.beans.actions.registry.DeleteRegistryItemAction">
+                      <void property="keyName">
+                        <string>Software\RubyInstaller\JRuby</string>
+                      </void>
+                      <void property="onlyIfEmpty">
+                        <boolean>false</boolean>
+                      </void>
+                      <void property="registryRoot">
+                        <object class="com.install4j.api.windows.RegistryRoot" field="HKEY_CURRENT_USER" />
+                      </void>
+                    </object>
+                  </java>
+                </serializedBean>
+                <condition />
+              </action>
+              <action name="" id="318" beanClass="com.install4j.runtime.beans.actions.registry.DeleteRegistryItemAction" enabled="true" commentSet="false" comment="" rollbackBarrier="true" multiExec="false" failureStrategy="1" errorMessage="">
+                <serializedBean>
+                  <java class="java.beans.XMLDecoder">
+                    <object class="com.install4j.runtime.beans.actions.registry.DeleteRegistryItemAction">
+                      <void property="keyName">
+                        <string>Software\RubyInstaller</string>
+                      </void>
+                      <void property="registryRoot">
+                        <object class="com.install4j.api.windows.RegistryRoot" field="HKEY_CURRENT_USER" />
+                      </void>
+                    </object>
+                  </java>
+                </serializedBean>
+                <condition />
+              </action>
               <action name="" id="15" beanClass="com.install4j.runtime.beans.actions.UninstallFilesAction" enabled="true" commentSet="false" comment="" rollbackBarrier="false" multiExec="false" failureStrategy="1" errorMessage="">
                 <serializedBean>
                   <java class="java.beans.XMLDecoder">
@@ -475,38 +670,36 @@
         <bean refId="26" />
       </excludedBeans>
       <overriddenPrincipalLanguage id="en" customLocalizationFile="" />
-      <exclude />
+      <exclude>
+        <entry location=".i4j_fileset_201" fileType="regular" />
+      </exclude>
       <variables />
     </win32>
-    <win32 name="Windows (64bit)" id="24" mediaFileName="${compiler:sys.shortName}_${compiler:sys.platform}_x64_${compiler:sys.version}" installDir="jruby-${compiler:sys.version}" overridePrincipalLanguage="false" requires64bit="true" jreBitType="64" runPostProcessor="false" postProcessor="" failOnPostProcessorError="false" includedJRE="" manualJREEntry="false" bundleType="1" jreURL="" jreFtpURL="" jreShared="false" directDownload="false" customInstallBaseDir="c:" createUninstallIcon="true" contentFilesType="1" downloadURL="" runAsAdmin="false">
+    <win32 name="Windows 64-bit" id="24" mediaFileName="${compiler:sys.shortName}_${compiler:sys.platform}_x64_${compiler:sys.version}" installDir="jruby-${compiler:sys.version}" overridePrincipalLanguage="false" requires64bit="true" jreBitType="64" runPostProcessor="false" postProcessor="" failOnPostProcessorError="false" includedJRE="" manualJREEntry="false" bundleType="1" jreURL="" jreFtpURL="" jreShared="false" directDownload="false" customInstallBaseDir="c:" createUninstallIcon="true" contentFilesType="1" downloadURL="" runAsAdmin="false">
       <excludedLaunchers />
       <excludedComponents />
       <excludedBeans>
         <bean refId="26" />
       </excludedBeans>
       <overriddenPrincipalLanguage id="en" customLocalizationFile="" />
-      <exclude />
+      <exclude>
+        <entry location=".i4j_fileset_201" fileType="regular" />
+      </exclude>
       <variables />
     </win32>
-    <win32 name="Windows w/ JRE" id="21" mediaFileName="${compiler:sys.shortName}_${compiler:sys.platform}jre_${compiler:sys.version}" installDir="jruby-${compiler:sys.version}" overridePrincipalLanguage="false" requires64bit="false" jreBitType="32" runPostProcessor="false" postProcessor="" failOnPostProcessorError="false" includedJRE="windows-x86-1.6.0_16" manualJREEntry="false" bundleType="1" jreURL="" jreFtpURL="" jreShared="false" directDownload="false" customInstallBaseDir="c:" createUninstallIcon="true" contentFilesType="1" downloadURL="" runAsAdmin="false">
-      <excludedLaunchers />
-      <excludedComponents />
-      <excludedBeans>
-        <bean refId="26" />
-      </excludedBeans>
-      <overriddenPrincipalLanguage id="en" customLocalizationFile="" />
-      <exclude />
-      <variables />
-    </win32>
-    <macosFolder name="Mac OS X Folder" id="22" mediaFileName="" installDir="jruby-${compiler:sys.version}" overridePrincipalLanguage="false" requires64bit="false" jreBitType="all" runPostProcessor="false" postProcessor="" failOnPostProcessorError="false" customInstallBaseDir="" createUninstallIcon="true" contentFilesType="1" downloadURL="">
-      <excludedLaunchers />
+    <macosFolder name="Mac OS X Folder" id="22" mediaFileName="${compiler:sys.shortName}_${compiler:sys.platform}_${compiler:sys.version}" installDir="jruby-${compiler:sys.version}" overridePrincipalLanguage="false" requires64bit="false" jreBitType="all" runPostProcessor="false" postProcessor="" failOnPostProcessorError="false" customInstallBaseDir="" createUninstallIcon="true" contentFilesType="1" downloadURL="">
+      <excludedLaunchers>
+        <launcher id="320" />
+      </excludedLaunchers>
       <excludedComponents />
       <excludedBeans>
         <bean refId="25" />
         <bean refId="63" />
       </excludedBeans>
       <overriddenPrincipalLanguage id="en" customLocalizationFile="" />
-      <exclude />
+      <exclude>
+        <entry location=".i4j_fileset_99" fileType="regular" />
+      </exclude>
       <variables />
     </macosFolder>
     <unixInstaller name="Unix Installer" id="23" mediaFileName="" installDir="jruby-${compiler:sys.version}" overridePrincipalLanguage="false" requires64bit="false" jreBitType="all" runPostProcessor="false" postProcessor="" failOnPostProcessorError="false" includedJRE="" manualJREEntry="false" bundleType="1" jreURL="" jreFtpURL="" jreShared="false" directDownload="false" customInstallBaseDir="" createUninstallIcon="true" contentFilesType="1" downloadURL="">

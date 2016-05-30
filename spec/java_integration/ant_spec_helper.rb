@@ -3,10 +3,14 @@ require 'ant'
 require 'tmpdir'
 
 class Ant
-  module Spec
-    class AntExampleGroup < ::Spec::Example::ExampleGroup
-      after :each do
-        Ant.send(:instance_variable_set, "@ant", nil)
+  module RSpec
+    module AntExampleGroup
+      def self.included(example_group)
+        example_group.after :each do
+          Ant.instance_eval do
+            instance_variable_set "@ant", nil
+          end
+        end
       end
 
       # Allows matching task structure with a nested hash as follows.
@@ -88,12 +92,12 @@ class Ant
           true
         end
 
-        def failure_message_for_should
+        def failure_message
           require 'pp'
           "expected #{@actual.name} to have structure:\n#{@expected.pretty_inspect}\n#{@message}"
         end
 
-        def failure_message_for_should_not
+        def failure_message_when_negated
           require 'pp'
           "expected #{@actual.name} to not have structure:\n#{@expected.pretty_inspect}\n#{@message}"
         end
@@ -110,8 +114,16 @@ class Ant
       def example_ant(options = {}, &block)
         Ant.new({:basedir => Dir::tmpdir, :run => false, :output_level => 0}.merge(options),&block)
       end
-
-      ::Spec::Example::ExampleGroupFactory.register(:ant, self)
     end
   end
+end
+
+def hide_ant_from_path
+  env=[]
+  ENV['PATH'].split(File::PATH_SEPARATOR).each do |dir|
+    if ! File.executable?(File.join(dir, 'ant'))
+      env << dir
+    end
+  end
+  ENV['PATH'] = env.join(File::PATH_SEPARATOR)
 end

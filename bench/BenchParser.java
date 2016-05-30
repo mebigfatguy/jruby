@@ -4,11 +4,12 @@ import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import org.jruby.Ruby;
 
 import org.jruby.RubyInstanceConfig;
 import org.jruby.common.NullWarnings;
 import org.jruby.lexer.yacc.LexerSource;
-import org.jruby.parser.DefaultRubyParser;
+import org.jruby.parser.Ruby20Parser;
 import org.jruby.parser.ParserConfiguration;
 
 public class BenchParser {
@@ -20,10 +21,11 @@ public class BenchParser {
             int[] parsers = getParsers(args);
 
             System.out.println("Parsing " + args[0] + " " + iterations + " times");
-            DefaultRubyParser parser = new DefaultRubyParser();
+            RubyParser parser = new Ruby20Parser();
             parser.setWarnings(new NullWarnings(null));
+            Ruby runtime = Ruby.getGlobalRuntime();
             RubyInstanceConfig rconfig = new RubyInstanceConfig();
-            ParserConfiguration config = new ParserConfiguration(rconfig.getKCode(), 0, false, false, true, rconfig);
+            ParserConfiguration config = new ParserConfiguration(runtime, 0, false, false, true, rconfig);
 
             for (int x = 0; x < parsers.length; x++) {
                 System.out.println("Benching parse with " + (parsers[x] == 0 ? "InputStream" : "ByteArray") + "LexerSource");

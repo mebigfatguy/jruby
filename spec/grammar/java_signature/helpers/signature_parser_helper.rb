@@ -7,15 +7,17 @@ java_import org.jruby.parser.JavaSignatureParser
 
 java_import java.io.ByteArrayInputStream
 
-BYTE = PrimitiveTypeNode.BYTE
-SHORT = PrimitiveTypeNode.SHORT
-INT = PrimitiveTypeNode.INT
-LONG = PrimitiveTypeNode.LONG
-CHAR = PrimitiveTypeNode.CHAR
-FLOAT = PrimitiveTypeNode.FLOAT
-DOUBLE = PrimitiveTypeNode.DOUBLE
-BOOLEAN = PrimitiveTypeNode.BOOLEAN
-VOID = PrimitiveTypeNode.VOID
+BYTE = PrimitiveTypeNode::BYTE
+SHORT = PrimitiveTypeNode::SHORT
+INT = PrimitiveTypeNode::INT
+LONG = PrimitiveTypeNode::LONG
+CHAR = PrimitiveTypeNode::CHAR
+FLOAT = PrimitiveTypeNode::FLOAT
+DOUBLE = PrimitiveTypeNode::DOUBLE
+BOOLEAN = PrimitiveTypeNode::BOOLEAN
+VOID = PrimitiveTypeNode::VOID
+
+Override = java.lang.Override
 
 class Object
   def signature(string)
@@ -128,9 +130,20 @@ class SimpleSignatureMatcher
     true
   end
 
+  def modifiers_match?(modifiers, expected_list)
+    modifiers.each_with_index do |modifier, i|
+      return false if modifier != expected_list[i]
+    end
+    true
+  end
+
   def matches?(ast)
     modifiers, return_type, name, parameters, throws = *@args
-    @errors << ['modifiers', ast.modifiers, modifiers] unless ast.modifiers.equals? modifiers
+    # Mildly brittle to depend on toString, but unlikely to change.
+    expected_modifiers = modifiers.map(&:to_s)
+    actual_modifiers = ast.modifiers.map(&:to_s)
+
+    @errors << ['modifiers', actual_modifiers, expected_modifiers] unless modifiers_match? actual_modifiers, expected_modifiers
     @errors << ['return type', ast.return_type, return_type] unless match_type? ast.return_type.to_s, return_type.to_s
     @errors << ['name', ast.name, name] unless ast.name == name
     @errors << ['parameters', ast.parameters, parameters] unless match_parameters? ast.parameters, parameters
@@ -157,7 +170,7 @@ class SimpleSignatureMatcher
   end
 end
  
-module Spec::Example::ExampleMethods
+class Object
   def have_signature(*args)
     SimpleSignatureMatcher.new(*args)
   end
