@@ -31,10 +31,8 @@
  ***** END LICENSE BLOCK *****/
 package org.jruby.ext.digest;
 
-import java.security.AccessController;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.security.PrivilegedAction;
 import java.security.Provider;
 import java.util.HashMap;
 import java.util.Map;
@@ -56,6 +54,7 @@ import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.Visibility;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.util.ArraySupport;
 import org.jruby.util.ByteList;
 import org.jruby.util.log.Logger;
 import org.jruby.util.log.LoggerFactory;
@@ -242,6 +241,14 @@ public class RubyDigest {
         SHA512.setInternalVariable("metadata", new Metadata("SHA-512", 128));
     }
 
+    public static void createDigestBubbleBabble(Ruby runtime) {
+        runtime.getLoadService().require("digest");
+        RubyModule Digest = runtime.getModule("Digest");
+        RubyClass Base = Digest.getClass("Base");
+        RubyClass MD5 = Digest.defineClassUnder("BubbleBabble", Base, Base.getAllocator());
+        MD5.setInternalVariable("metadata", new Metadata("BubbleBabble", 64));
+    }
+
     @JRubyModule(name = "Digest::Instance")
     public static class DigestInstance {
 
@@ -369,14 +376,13 @@ public class RubyDigest {
 
         @JRubyMethod(name = "digest", required = 1, rest = true, meta = true)
         public static IRubyObject s_digest(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block unusedBlock) {
-            Ruby runtime = recv.getRuntime();
+            final Ruby runtime = context.runtime;
             if (args.length < 1) {
                 throw runtime.newArgumentError("no data given");
             }
             RubyString str = args[0].convertToString();
-            IRubyObject[] newArgs = new IRubyObject[args.length - 1];
-            System.arraycopy(args, 1, newArgs, 0, args.length - 1);
-            IRubyObject obj = ((RubyClass)recv).newInstance(context, newArgs, Block.NULL_BLOCK);
+            args = ArraySupport.newCopy(args, 1, args.length - 1); // skip first arg
+            IRubyObject obj = ((RubyClass) recv).newInstance(context, args, Block.NULL_BLOCK);
             return obj.callMethod(context, "digest", str);
         }
 
@@ -385,6 +391,12 @@ public class RubyDigest {
             Ruby runtime = recv.getRuntime();
             byte[] digest = recv.callMethod(context, "digest", args, Block.NULL_BLOCK).convertToString().getBytes();
             return RubyDigest.toHexString(runtime, digest);
+        }
+
+        @JRubyMethod(name = "bubblebabble", required = 1, meta = true)
+        public static RubyString bubblebabble(IRubyObject recv, IRubyObject arg) {
+            byte[] digest = recv.callMethod(recv.getRuntime().getCurrentContext(), "digest", arg).convertToString().getBytes();
+            return RubyString.newString(recv.getRuntime(), BubbleBabble.bubblebabble(digest, 0, digest.length));
         }
     }
 

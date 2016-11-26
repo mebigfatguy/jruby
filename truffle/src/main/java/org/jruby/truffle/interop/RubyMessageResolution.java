@@ -59,7 +59,7 @@ public class RubyMessageResolution {
 
         private ForeignExecuteHelperNode getHelperNode() {
             if (executeMethodNode == null) {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 findContextNode = insert(RubyLanguage.INSTANCE.unprotectedCreateFindContextNode());
                 final RubyContext context = RubyLanguage.INSTANCE.unprotectedFindContext(findContextNode);
                 executeMethodNode = insert(ForeignExecuteHelperNodeGen.create(context, null, null));
@@ -82,10 +82,10 @@ public class RubyMessageResolution {
 
         private DispatchHeadNode getDispatchNode() {
             if (dispatchNode == null) {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 findContextNode = insert(RubyLanguage.INSTANCE.unprotectedCreateFindContextNode());
                 final RubyContext context = RubyLanguage.INSTANCE.unprotectedFindContext(findContextNode);
-                dispatchNode = insert(new DispatchHeadNode(context, true, MissingBehavior.CALL_METHOD_MISSING, DispatchAction.CALL_METHOD));
+                dispatchNode = insert(new DispatchHeadNode(context, true, false, MissingBehavior.CALL_METHOD_MISSING, DispatchAction.CALL_METHOD));
             }
 
             return dispatchNode;
@@ -114,10 +114,10 @@ public class RubyMessageResolution {
 
         private DispatchHeadNode getDispatchHeadNode() {
             if (dispatchHeadNode == null) {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 findContextNode = insert(RubyLanguage.INSTANCE.unprotectedCreateFindContextNode());
                 final RubyContext context = RubyLanguage.INSTANCE.unprotectedFindContext(findContextNode);
-                dispatchHeadNode = insert(new DispatchHeadNode(context, true, MissingBehavior.CALL_METHOD_MISSING, DispatchAction.CALL_METHOD));
+                dispatchHeadNode = insert(new DispatchHeadNode(context, true, false, MissingBehavior.CALL_METHOD_MISSING, DispatchAction.CALL_METHOD));
             }
 
             return dispatchHeadNode;
@@ -177,7 +177,7 @@ public class RubyMessageResolution {
 
         private ForeignReadStringCachingHelperNode getHelperNode() {
             if (helperNode == null) {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 findContextNode = insert(RubyLanguage.INSTANCE.unprotectedCreateFindContextNode());
                 final RubyContext context = RubyLanguage.INSTANCE.unprotectedFindContext(findContextNode);
                 helperNode = insert(ForeignReadStringCachingHelperNodeGen.create(context, null, null));
@@ -222,13 +222,38 @@ public class RubyMessageResolution {
 
         private ForeignWriteStringCachingHelperNode getHelperNode() {
             if (helperNode == null) {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 findContextNode = insert(RubyLanguage.INSTANCE.unprotectedCreateFindContextNode());
                 final RubyContext context = RubyLanguage.INSTANCE.unprotectedFindContext(findContextNode);
                 helperNode = insert(ForeignWriteStringCachingHelperNodeGen.create(context, null, null, null));
             }
 
             return helperNode;
+        }
+
+    }
+
+    @Resolve(message = "KEYS")
+    public static abstract class ForeignKeysNode extends Node {
+
+        @CompilationFinal private RubyContext context;
+
+        @Child private Node findContextNode;
+        @Child private DispatchHeadNode dispatchNode;
+
+        protected Object access(VirtualFrame frame, DynamicObject object) {
+            return getDispatchNode().dispatch(frame, context.getCoreLibrary().getTruffleInteropModule(), "ruby_object_keys", null, new Object[]{ object });
+        }
+
+        private DispatchHeadNode getDispatchNode() {
+            if (dispatchNode == null) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                findContextNode = insert(RubyLanguage.INSTANCE.unprotectedCreateFindContextNode());
+                context = RubyLanguage.INSTANCE.unprotectedFindContext(findContextNode);
+                dispatchNode = insert(new DispatchHeadNode(context, true, false, MissingBehavior.CALL_METHOD_MISSING, DispatchAction.CALL_METHOD));
+            }
+
+            return dispatchNode;
         }
 
     }

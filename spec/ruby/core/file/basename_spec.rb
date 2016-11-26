@@ -86,8 +86,19 @@ describe "File.basename" do
     File.basename("bar.txt", ".*").should == "bar"
     File.basename("bar.txt.exe", ".*").should == "bar.txt"
     File.basename("bar.txt.exe", ".txt.exe").should == "bar"
-    deviates_on :rbx do
-      File.basename("bar.txt.exe", ".txt.*").should == "bar"
+  end
+
+  it "takes into consideration the platform path separator(s)" do
+    platform_is_not :windows do
+      File.basename("C:\\foo\\bar").should == "C:\\foo\\bar"
+      File.basename("C:/foo/bar").should == "bar"
+      File.basename("/foo/bar\\baz").should == "bar\\baz"
+    end
+
+    platform_is :windows do
+      File.basename("C:\\foo\\bar").should == "bar"
+      File.basename("C:/foo/bar").should == "bar"
+      File.basename("/foo/bar\\baz").should == "baz"
     end
   end
 

@@ -9,7 +9,7 @@
  */
 package org.jruby.truffle.language.dispatch;
 
-import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
@@ -17,16 +17,13 @@ import com.oracle.truffle.api.object.DynamicObject;
 import com.oracle.truffle.api.profiles.BranchProfile;
 import org.jruby.truffle.RubyContext;
 import org.jruby.truffle.core.array.ArrayUtils;
+import org.jruby.truffle.core.cast.NameToJavaStringNode;
 import org.jruby.truffle.core.cast.ToSymbolNode;
 import org.jruby.truffle.core.cast.ToSymbolNodeGen;
-import org.jruby.truffle.interop.ToJavaStringNode;
-import org.jruby.truffle.interop.ToJavaStringNodeGen;
 import org.jruby.truffle.language.arguments.RubyArguments;
 import org.jruby.truffle.language.control.RaiseException;
 import org.jruby.truffle.language.methods.DeclarationContext;
 import org.jruby.truffle.language.methods.InternalMethod;
-import org.jruby.truffle.language.objects.MetaClassNode;
-import org.jruby.truffle.language.objects.MetaClassNodeGen;
 
 public class UncachedDispatchNode extends DispatchNode {
 
@@ -35,10 +32,10 @@ public class UncachedDispatchNode extends DispatchNode {
 
     @Child private IndirectCallNode indirectCallNode;
     @Child private ToSymbolNode toSymbolNode;
-    @Child private ToJavaStringNode toJavaStringNode;
-    @Child private MetaClassNode metaClassNode;
+    @Child private NameToJavaStringNode toJavaStringNode;
 
     private final BranchProfile methodMissingProfile = BranchProfile.create();
+    private final BranchProfile methodMissingNotFoundProfile = BranchProfile.create();
 
     public UncachedDispatchNode(RubyContext context, boolean ignoreVisibility, DispatchAction dispatchAction, MissingBehavior missingBehavior) {
         super(context, dispatchAction);
@@ -47,8 +44,7 @@ public class UncachedDispatchNode extends DispatchNode {
         this.missingBehavior = missingBehavior;
         this.indirectCallNode = Truffle.getRuntime().createIndirectCallNode();
         this.toSymbolNode = ToSymbolNodeGen.create(context, null, null);
-        this.toJavaStringNode = ToJavaStringNodeGen.create();
-        this.metaClassNode = MetaClassNodeGen.create(context, null, null);
+        this.toJavaStringNode = NameToJavaStringNode.create();
     }
 
     @Override
@@ -65,9 +61,7 @@ public class UncachedDispatchNode extends DispatchNode {
             Object[] argumentsObjects) {
         final DispatchAction dispatchAction = getDispatchAction();
 
-        final DynamicObject callerClass = ignoreVisibility ? null : metaClassNode.executeMetaClass(RubyArguments.getSelf(frame));
-
-        final InternalMethod method = lookup(callerClass, receiverObject, toJavaStringNode.executeToJavaString(name), ignoreVisibility);
+        final InternalMethod method = lookup(frame, receiverObject, toJavaStringNode.executeToJavaString(frame, name), ignoreVisibility);
 
         if (method != null) {
             if (dispatchAction == DispatchAction.CALL_METHOD) {
@@ -85,15 +79,14 @@ public class UncachedDispatchNode extends DispatchNode {
 
         methodMissingProfile.enter();
 
-        final InternalMethod missingMethod = lookup(callerClass, receiverObject, "method_missing", true);
+        final InternalMethod missingMethod = lookup(frame, receiverObject, "method_missing", true);
 
         if (missingMethod == null) {
             if (dispatchAction == DispatchAction.RESPOND_TO_METHOD) {
                 return false;
             } else {
-                CompilerDirectives.transferToInterpreter();
-                throw new RaiseException(coreExceptions().runtimeError(
-                        receiverObject.toString() + " didn't have a #method_missing", this));
+                methodMissingNotFoundProfile.enter();
+                throw new RaiseException(methodMissingNotFound(receiverObject));
             }
         }
 
@@ -114,6 +107,11 @@ public class UncachedDispatchNode extends DispatchNode {
                 frame,
                 method.getCallTarget(),
                 RubyArguments.pack(null, null, method, DeclarationContext.METHOD, null, receiverObject, blockObject, argumentsObjects));
+    }
+
+    @TruffleBoundary
+    private DynamicObject methodMissingNotFound(Object receiverObject) {
+        return coreExceptions().runtimeError(receiverObject.toString() + " didn't have a #method_missing", this);
     }
 
 }

@@ -10,5 +10,22 @@ module Math
 
   PI = 3.14159265358979323846
   E = 2.7182818284590452354
+  
+  DomainError = Errno::EDOM
+
+  module_function
+
+  def frexp(x)
+    Truffle.primitive :math_frexp
+    frexp Rubinius::Type.coerce_to_float(x)
+  end
+
+  def ldexp(fraction, exponent)
+    Truffle.primitive :math_ldexp
+    raise RangeError, "float NaN out of range of integer" if Float === exponent and exponent.nan?
+    ldexp(
+      Rubinius::Type.coerce_to_float(fraction),
+      Rubinius::Type.coerce_to_int(exponent))
+  end
 
 end

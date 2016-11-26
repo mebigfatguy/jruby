@@ -19,6 +19,7 @@ import jnr.posix.Passwd;
 import jnr.posix.SignalHandler;
 import jnr.posix.SpawnFileAction;
 import jnr.posix.Times;
+import org.jruby.truffle.core.CoreLibrary;
 
 import java.io.FileDescriptor;
 import java.nio.ByteBuffer;
@@ -87,11 +88,6 @@ public class JNRTrufflePosix implements TrufflePosix {
     }
 
     @Override
-    public Pointer environ() {
-        return posix.environ();
-    }
-
-    @Override
     public String getenv(String envName) {
         return posix.getenv(envName);
     }
@@ -122,6 +118,11 @@ public class JNRTrufflePosix implements TrufflePosix {
     }
 
     @Override
+    public int setpgid(int pid, int pgid) {
+        return posix.setpgid(pid, pgid);
+    }
+
+    @Override
     public int getpgrp() {
         return posix.getpgrp();
     }
@@ -138,6 +139,10 @@ public class JNRTrufflePosix implements TrufflePosix {
 
     @Override
     public int getpriority(int which, int who) {
+        // getpriority can return -1 so errno has to be cleared.
+        // it should be done as close as possible to the syscall
+        // as JVM classloading could change errno.
+        posix.errno(0);
         return posix.getpriority(which, who);
     }
 
@@ -179,6 +184,11 @@ public class JNRTrufflePosix implements TrufflePosix {
     @Override
     public SignalHandler signal(Signal sig, SignalHandler handler) {
         return posix.signal(sig, handler);
+    }
+
+    @Override
+    public int lchmod(String filename, int mode) {
+        return posix.lchmod(filename, mode);
     }
 
     @Override
@@ -306,8 +316,8 @@ public class JNRTrufflePosix implements TrufflePosix {
     }
 
     @Override
-    public long posix_spawnp(String path, Collection<? extends SpawnFileAction> fileActions, Collection<? extends CharSequence> argv, Collection<? extends CharSequence> envp) {
-        return posix.posix_spawnp(path, fileActions, argv, envp);
+    public int posix_spawnp(String path, Collection<? extends SpawnFileAction> fileActions, Collection<? extends CharSequence> argv, Collection<? extends CharSequence> envp) {
+        return CoreLibrary.long2int(posix.posix_spawnp(path, fileActions, argv, envp));
     }
 
     @Override
@@ -413,5 +423,20 @@ public class JNRTrufflePosix implements TrufflePosix {
     @Override
     public int isatty(int fd) {
         return posix.libc().isatty(fd);
+    }
+
+    @Override
+    public int mkfifo(String path, int mode) {
+        return posix.mkfifo(path, mode);
+    }
+
+    @Override
+    public long[] getgroups() {
+        return posix.getgroups();
+    }
+
+    @Override
+    public String nl_langinfo(int item) {
+        return posix.nl_langinfo(item);
     }
 }

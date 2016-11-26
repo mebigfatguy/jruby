@@ -38,7 +38,7 @@ public class ReadLastBacktraceNode extends RubyNode {
             return nil();
         }
 
-        return getGetBacktraceNode().call(frame, lastException, "backtrace", null);
+        return getGetBacktraceNode().call(frame, lastException, "backtrace");
     }
 
     @Override
@@ -48,8 +48,8 @@ public class ReadLastBacktraceNode extends RubyNode {
 
     private ReadThreadLocalGlobalVariableNode getGetLastExceptionNode() {
         if (getLastExceptionNode == null) {
-            CompilerDirectives.transferToInterpreter();
-            getLastExceptionNode = insert(new ReadThreadLocalGlobalVariableNode(getContext(), getSourceSection(), "$!", true));
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            getLastExceptionNode = insert(new ReadThreadLocalGlobalVariableNode(getContext(), null, "$!", true));
         }
 
         return getLastExceptionNode;
@@ -57,7 +57,7 @@ public class ReadLastBacktraceNode extends RubyNode {
 
     private CallDispatchHeadNode getGetBacktraceNode() {
         if (getBacktraceNode == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             getBacktraceNode = insert(DispatchHeadNodeFactory.createMethodCall(getContext()));
         }
 

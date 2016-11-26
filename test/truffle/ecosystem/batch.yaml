@@ -1,0 +1,8 @@
+---
+- actionpack
+- activesupport
+- activemodel
+- algebrick
+- railties
+
+# - [gem_name, --option] # is alternative format

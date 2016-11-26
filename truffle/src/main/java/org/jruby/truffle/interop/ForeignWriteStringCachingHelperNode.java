@@ -18,6 +18,7 @@ import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.object.DynamicObject;
 import org.jruby.truffle.RubyContext;
+import org.jruby.truffle.core.cast.NameToJavaStringNode;
 import org.jruby.truffle.core.string.StringCachingGuards;
 import org.jruby.truffle.language.RubyNode;
 
@@ -32,30 +33,29 @@ abstract class ForeignWriteStringCachingHelperNode extends RubyNode {
     private @Child IsStringLikeNode isStringLikeNode;
 
     public ForeignWriteStringCachingHelperNode(RubyContext context) {
-        super(context, null);
+        super(context);
     }
 
     public abstract Object executeStringCachingHelper(VirtualFrame frame, DynamicObject receiver, Object name, Object value);
 
     @Specialization(guards = "isStringLike(name)")
     public Object cacheStringLikeAndForward(VirtualFrame frame, DynamicObject receiver, Object name, Object value,
-            @Cached("create()") ToJavaStringNode toJavaStringNode,
+            @Cached("create()") NameToJavaStringNode toJavaStringNode,
             @Cached("createNextHelper()") ForeignWriteStringCachedHelperNode nextHelper) {
-        String nameAsJavaString = toJavaStringNode.executeToJavaString(name);
+        String nameAsJavaString = toJavaStringNode.executeToJavaString(frame, name);
         boolean isIVar = isIVar(nameAsJavaString);
         return nextHelper.executeStringCachedHelper(frame, receiver, name, nameAsJavaString, isIVar, value);
     }
 
     @Specialization(guards = "!isStringLike(name)")
     public Object passThroughNonString(VirtualFrame frame, DynamicObject receiver, Object name, Object value,
-            @Cached("create()") ToJavaStringNode toJavaStringNode,
             @Cached("createNextHelper()") ForeignWriteStringCachedHelperNode nextHelper) {
         return nextHelper.executeStringCachedHelper(frame, receiver, name, null, false, value);
     }
 
     protected boolean isStringLike(Object value) {
         if (isStringLikeNode == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             isStringLikeNode = insert(IsStringLikeNode.create());
         }
 

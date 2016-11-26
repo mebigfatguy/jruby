@@ -75,8 +75,8 @@ public abstract class IsANode extends RubyNode {
 
     protected DynamicObject getMetaClass(Object object) {
         if (metaClassNode == null) {
-            CompilerDirectives.transferToInterpreter();
-            metaClassNode = insert(MetaClassNodeGen.create(getContext(), getSourceSection(), null));
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            metaClassNode = insert(MetaClassNodeGen.create(getContext(), null, null));
         }
 
         return metaClassNode.executeMetaClass(object);

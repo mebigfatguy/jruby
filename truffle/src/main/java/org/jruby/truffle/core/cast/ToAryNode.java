@@ -44,13 +44,13 @@ public abstract class ToAryNode extends RubyNode {
     public DynamicObject coerceObject(VirtualFrame frame, Object object,
             @Cached("create()") BranchProfile errorProfile) {
         if (toAryNode == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             toAryNode = insert(DispatchHeadNodeFactory.createMethodCall(getContext()));
         }
 
         final Object coerced;
         try {
-            coerced = toAryNode.call(frame, object, "to_ary", null);
+            coerced = toAryNode.call(frame, object, "to_ary");
         } catch (RaiseException e) {
             errorProfile.enter();
             if (Layouts.BASIC_OBJECT.getLogicalClass(e.getException()) == coreLibrary().getNoMethodErrorClass()) {

@@ -21,6 +21,7 @@ import org.jruby.truffle.RubyContext;
 import org.jruby.truffle.language.RubyNode;
 
 import static org.jruby.truffle.core.array.ArrayHelpers.getSize;
+import static org.jruby.truffle.core.array.ArrayHelpers.setSize;
 import static org.jruby.truffle.core.array.ArrayHelpers.setStoreAndSize;
 
 @NodeChildren({
@@ -77,7 +78,8 @@ public abstract class ArrayWriteNormalizedNode extends RubyNode {
     // Writing within an existing array with an incompatible type - need to generalise
 
     @Specialization(guards = {
-            "isInBounds(array, index)", "currentStrategy.matches(array)", "!currentStrategy.accepts(array)", "generalizedStrategy.accepts(value)",
+                    "isInBounds(array, index)", "currentStrategy.matches(array)",
+                    "!currentStrategy.accepts(value)", "generalizedStrategy.accepts(value)",
     }, limit = "ARRAY_STRATEGIES")
     public Object writeWithinGeneralize(DynamicObject array, int index, Object value,
             @Cached("of(array)") ArrayStrategy currentStrategy,
@@ -101,7 +103,7 @@ public abstract class ArrayWriteNormalizedNode extends RubyNode {
     }
 
     protected ArrayAppendOneNode createArrayAppendOneNode() {
-        return ArrayAppendOneNodeGen.create(getContext(), getSourceSection(), null, null);
+        return ArrayAppendOneNodeGen.create(getContext(), null, null, null);
     }
 
     // Writing beyond the end of an array - may need to generalize to Object[] or otherwise extend
@@ -132,7 +134,7 @@ public abstract class ArrayWriteNormalizedNode extends RubyNode {
             objectStore[n] = nil();
         }
         objectStore[index] = value;
-        Layouts.ARRAY.setSize(array, index + 1);
+        setSize(array, index + 1);
         return value;
     }
 

@@ -10,6 +10,7 @@
 package org.jruby.truffle.builtins;
 
 import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.object.DynamicObject;
 import com.oracle.truffle.api.profiles.ConditionProfile;
@@ -21,15 +22,15 @@ import org.jruby.truffle.language.dispatch.DispatchHeadNodeFactory;
 
 public class ReturnEnumeratorIfNoBlockNode extends RubyNode {
 
+    private final String methodName;
     @Child private RubyNode method;
     @Child private CallDispatchHeadNode toEnumNode;
-    private final DynamicObject methodSymbol;
+    @CompilationFinal private DynamicObject methodSymbol;
     private final ConditionProfile noBlockProfile = ConditionProfile.createBinaryProfile();
 
     public ReturnEnumeratorIfNoBlockNode(String methodName, RubyNode method) {
-        super(method.getContext(), method.getEncapsulatingSourceSection());
+        this.methodName = methodName;
         this.method = method;
-        this.methodSymbol = getSymbol(methodName);
     }
 
     @Override
@@ -38,12 +39,17 @@ public class ReturnEnumeratorIfNoBlockNode extends RubyNode {
 
         if (noBlockProfile.profile(block == null)) {
             if (toEnumNode == null) {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 toEnumNode = insert(DispatchHeadNodeFactory.createMethodCall(getContext()));
             }
 
+            if (methodSymbol == null) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                methodSymbol = getSymbol(methodName);
+            }
+
             final Object[] arguments = ArrayUtils.unshift(RubyArguments.getArguments(frame), methodSymbol);
-            return toEnumNode.call(frame, RubyArguments.getSelf(frame), "to_enum", null, arguments);
+            return toEnumNode.call(frame, RubyArguments.getSelf(frame), "to_enum", arguments);
         } else {
             return method.execute(frame);
         }

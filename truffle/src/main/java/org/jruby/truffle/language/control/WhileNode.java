@@ -46,7 +46,7 @@ public final class WhileNode extends RubyNode {
         loopNode.executeLoop(frame);
         return nil();
     }
-    
+
     private static abstract class WhileRepeatingBaseNode extends Node implements RepeatingNode {
 
         protected final RubyContext context;
@@ -60,13 +60,18 @@ public final class WhileNode extends RubyNode {
 
         public WhileRepeatingBaseNode(RubyContext context, RubyNode condition, RubyNode body) {
             this.context = context;
-            this.condition = BooleanCastNodeGen.create(context, condition.getSourceSection(), condition);
+            this.condition = BooleanCastNodeGen.create(condition);
             this.body = body;
         }
 
         @Override
         public String toString() {
-            return condition.getEncapsulatingSourceSection().getShortDescription();
+            SourceSection sourceSection = getEncapsulatingSourceSection();
+            if (sourceSection != null && sourceSection.getSource() != null) {
+                return String.format("while loop at %s:%d", sourceSection.getSource().getName(), sourceSection.getStartLine());
+            } else {
+                return "while loop";
+            }
         }
 
     }
@@ -99,7 +104,7 @@ public final class WhileNode extends RubyNode {
         }
 
     }
-    
+
     private static class DoWhileRepeatingNode extends WhileRepeatingBaseNode implements RepeatingNode {
 
         public DoWhileRepeatingNode(RubyContext context, RubyNode condition, RubyNode body) {

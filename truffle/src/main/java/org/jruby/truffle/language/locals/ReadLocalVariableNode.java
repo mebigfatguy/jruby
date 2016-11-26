@@ -15,7 +15,7 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.source.SourceSection;
 import org.jruby.truffle.RubyContext;
 import org.jruby.truffle.language.RubyNode;
-import org.jruby.truffle.language.parser.jruby.ReadLocalNode;
+import org.jruby.truffle.parser.ReadLocalNode;
 
 public class ReadLocalVariableNode extends ReadLocalNode {
 
@@ -61,14 +61,14 @@ public class ReadLocalVariableNode extends ReadLocalNode {
 
     private void checkReadFrameSlotNode() {
         if (readFrameSlotNode == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             readFrameSlotNode = insert(ReadFrameSlotNodeGen.create(frameSlot));
         }
     }
 
     @Override
     public RubyNode makeWriteNode(RubyNode rhs) {
-        return new WriteLocalVariableNode(getContext(), getSourceSection(), frameSlot, rhs);
+        return WriteLocalVariableNode.createWriteLocalVariableNode(getContext(), getRubySourceSection(), frameSlot, rhs);
     }
 
 }

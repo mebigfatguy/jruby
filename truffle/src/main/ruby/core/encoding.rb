@@ -36,9 +36,6 @@ class EncodingError < StandardError
 end
 
 class Encoding
-  # There's a fun bootstrapping issue here.  Encoding::Converter.transcoding_map needs access to the Encoding::Transcoding
-  # class. However, this shim runs before Encoding::Transcoding is defined.  Since the class body is short, we reproduce
-  # it here along with a convenient factory method.
   class Transcoding
     attr_accessor :source
     attr_accessor :target
@@ -57,9 +54,32 @@ class Encoding
     end
   end
 
+  class << self
+    def build_encoding_map
+      map = Rubinius::LookupTable.new
+      Encoding.list.each_with_index { |encoding, index|
+        key = encoding.name.upcase.to_sym
+        map[key] = [nil, index]
+      }
+
+      Truffle::Encoding.each_alias { |alias_name, index|
+        key = alias_name.upcase.to_sym
+        map[key] = [alias_name, index]
+      }
+
+      %w[internal external locale filesystem].each { |name|
+        key = name.upcase.to_sym
+        enc = Truffle::Encoding.get_default_encoding(name)
+        index = enc ? map[enc.name.upcase.to_sym].last : nil
+        map[key] = [name, index]
+      }
+      map
+    end
+    private :build_encoding_map
+  end
+
   TranscodingMap = Encoding::Converter.transcoding_map
-  EncodingMap = Encoding.encoding_map
-  EncodingList = Encoding.list
+  EncodingMap = build_encoding_map
 
   @default_external = undefined
   @default_internal = undefined
@@ -112,25 +132,11 @@ class Encoding
   class CompatibilityError < EncodingError
   end
 
-  class Transcoding
-    attr_accessor :source
-    attr_accessor :target
-
-    def inspect
-      "#<#{super} #{source} to #{target}"
-    end
-  end
-
   class Converter
     attr_accessor :source_encoding
     attr_accessor :destination_encoding
     attr_reader :replacement
     attr_reader :options
-
-    def self.allocate
-      Truffle.primitive :encoding_converter_allocate
-      raise PrimitiveFailure, "Encoding::Converter.allocate primitive failed"
-    end
 
     def self.asciicompat_encoding(string_or_encoding)
       encoding = Rubinius::Type.try_convert_to_encoding string_or_encoding
@@ -221,6 +227,7 @@ class Encoding
           @replacement_converters << name << converters
         end
       end
+      initialize_jruby(*[@source_encoding, @destination_encoding, @options])
     end
 
     def convert(str)
@@ -447,11 +454,6 @@ class Encoding
         @load_cache = false
       end
 
-      def self.cache_loaded
-        @cache_valid = true
-        @load_cache = false
-      end
-
       def self.load_cache?
         @load_cache
       end
@@ -462,10 +464,6 @@ class Encoding
 
       def self.cache_threshold?
         @paths.size > 5
-      end
-
-      def self.default_transcoders?
-        @transcoders_count == TranscodingMap.size
       end
 
       def self.cache_valid?
@@ -550,7 +548,7 @@ class Encoding
       next unless index
 
       aname = r.first
-      aliases[aname] = EncodingList[index].name if aname
+      aliases[aname] = Truffle.invoke_primitive(:encoding_get_encoding_by_index, index).name if aname
     end
 
     aliases
@@ -590,6 +588,7 @@ class Encoding
     set_alias_index "external", enc
     set_alias_index "filesystem", enc
     @default_external = undefined
+    Truffle::Encoding.default_external = enc
   end
 
   def self.default_internal
@@ -602,6 +601,7 @@ class Encoding
   def self.default_internal=(enc)
     set_alias_index "internal", enc
     @default_internal = undefined
+    Truffle::Encoding.default_internal = enc
   end
 
   def self.find(name)
@@ -611,18 +611,10 @@ class Encoding
     raise ArgumentError, "unknown encoding name - #{name}"
   end
 
-  def self.list
-    EncodingList
-  end
-
-  def self.locale_charmap
-    LocaleCharmap
-  end
-
   def self.name_list
     EncodingMap.map do |n, r|
       index = r.last
-      r.first or (index and EncodingList[index].name)
+      r.first or (index and Truffle.invoke_primitive(:encoding_get_encoding_by_index, index).name)
     end
   end
 
@@ -640,6 +632,10 @@ class Encoding
     names
   end
 
+  def replicate(name)
+    Truffle.invoke_primitive(:encoding_replicate, self, StringValue(name))
+  end
+
   def _dump(depth)
     name
   end
@@ -647,6 +643,7 @@ class Encoding
   def self._load(name)
     find name
   end
+
 end
 
 Encoding::TranscodingMap[:'UTF-16BE'] = Rubinius::LookupTable.new

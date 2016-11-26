@@ -10,6 +10,7 @@
 package org.jruby.truffle.language.constants;
 
 import com.oracle.truffle.api.Assumption;
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.NodeChild;
@@ -20,10 +21,10 @@ import com.oracle.truffle.api.object.DynamicObject;
 import com.oracle.truffle.api.profiles.ConditionProfile;
 import org.jruby.truffle.Layouts;
 import org.jruby.truffle.core.module.ModuleOperations;
-import org.jruby.truffle.language.CheckLayoutNode;
 import org.jruby.truffle.language.LexicalScope;
 import org.jruby.truffle.language.RubyConstant;
 import org.jruby.truffle.language.RubyNode;
+import org.jruby.truffle.language.WarnNode;
 import org.jruby.truffle.language.control.RaiseException;
 
 /**
@@ -38,12 +39,11 @@ public abstract class LookupConstantNode extends RubyNode implements LookupConst
 
     private final boolean ignoreVisibility;
     private final boolean lookInObject;
+    @Child private WarnNode warnNode;
 
     public static LookupConstantNode create(boolean ignoreVisibility, boolean lookInObject) {
         return LookupConstantNodeGen.create(ignoreVisibility, lookInObject, null, null);
     }
-
-    @Child CheckLayoutNode checkLayoutNode = new CheckLayoutNode();
 
     public LookupConstantNode(boolean ignoreVisibility, boolean lookInObject) {
         this.ignoreVisibility = ignoreVisibility;
@@ -77,21 +77,36 @@ public abstract class LookupConstantNode extends RubyNode implements LookupConst
         if (!isVisible) {
             throw new RaiseException(coreExceptions().nameErrorPrivateConstant(module, name, this));
         }
+        if (constant != null && constant.isDeprecated()) {
+            warnDeprecatedConstant(frame, name);
+        }
         return constant;
+    }
+
+    private void warnDeprecatedConstant(VirtualFrame frame, String name) {
+        if (warnNode == null) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            warnNode = insert(new WarnNode());
+        }
+        warnNode.execute(frame, "constant ", name, " is deprecated");
     }
 
     public Assumption getUnmodifiedAssumption(DynamicObject module) {
         return Layouts.MODULE.getFields(module).getUnmodifiedAssumption();
     }
 
-    @TruffleBoundary
-    @Specialization(guards = "isRubyModuleFast(module)")
-    protected RubyConstant lookupConstantUncached(DynamicObject module, String name) {
+    @Specialization(guards = "isRubyModule(module)")
+    protected RubyConstant lookupConstantUncached(VirtualFrame frame, DynamicObject module, String name,
+            @Cached("createBinaryProfile()") ConditionProfile isVisibleProfile,
+            @Cached("createBinaryProfile()") ConditionProfile isDeprecatedProfile) {
         RubyConstant constant = doLookup(module, name);
         boolean isVisible = isVisible(module, constant);
 
-        if (!isVisible) {
+        if (isVisibleProfile.profile(!isVisible)) {
             throw new RaiseException(coreExceptions().nameErrorPrivateConstant(module, name, this));
+        }
+        if (isDeprecatedProfile.profile(constant != null && constant.isDeprecated())) {
+            warnDeprecatedConstant(frame, name);
         }
         return constant;
     }
@@ -111,10 +126,7 @@ public abstract class LookupConstantNode extends RubyNode implements LookupConst
         }
     }
 
-    protected boolean isRubyModuleFast(DynamicObject module) {
-        return checkLayoutNode.isModule(module);
-    }
-
+    @TruffleBoundary
     protected RubyConstant doLookup(DynamicObject module, String name) {
         if (lookInObject) {
             return ModuleOperations.lookupConstantAndObject(getContext(), module, name);
@@ -123,6 +135,7 @@ public abstract class LookupConstantNode extends RubyNode implements LookupConst
         }
     }
 
+    @TruffleBoundary
     protected boolean isVisible(DynamicObject module, RubyConstant constant) {
         return ignoreVisibility ||
                 constant == null ||

@@ -109,7 +109,7 @@ class Exception
     out << ms.serialize_fixnum(2)
 
     out << ms.serialize(:mesg)
-    out << ms.serialize(self.message)
+    out << ms.serialize(Truffle.invoke_primitive(:exception_message, self))
     out << ms.serialize(:bt)
     out << ms.serialize(self.backtrace)
 
@@ -811,23 +811,6 @@ module Marshal
       end
     end
 
-    def construct_object
-      name = get_symbol
-      klass = const_lookup name, Class
-      obj = klass.allocate
-
-      raise TypeError, 'dump format error' unless Object === obj
-
-      store_unique_object obj
-      if Rubinius::Type.object_kind_of? obj, Exception
-        set_exception_variables obj
-      else
-        set_instance_variables obj
-      end
-
-      obj
-    end
-
     def construct_regexp
       s = get_byte_sequence
       if @user_class
@@ -1171,10 +1154,11 @@ module Marshal
         when :bt
           obj.__instance_variable_set__ :@custom_backtrace, value
         when :mesg
-          obj.__instance_variable_set__ :@reason_message, value
+          Truffle.invoke_primitive :exception_set_message, obj, value
         end
       end
     end
+
     def construct_object
       name = get_symbol
       klass = const_lookup name, Class

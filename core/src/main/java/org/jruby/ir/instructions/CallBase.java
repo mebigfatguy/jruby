@@ -12,6 +12,7 @@ import org.jruby.parser.StaticScope;
 import org.jruby.runtime.*;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.runtime.callsite.RefinedCachingCallSite;
+import org.jruby.util.ArraySupport;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -114,9 +115,7 @@ public abstract class CallBase extends NOperandInstr implements ClosureAccepting
     // Warning: Potentially expensive.  Analysis should be written around retrieving operands.
     public Operand[] getCallArgs() {
         Operand[] callArgs = new Operand[argsCount];
-
-        System.arraycopy(operands, 1, callArgs, 0, argsCount);
-
+        ArraySupport.copy(operands, 1, callArgs, 0, argsCount);
         return callArgs;
     }
 
@@ -144,7 +143,7 @@ public abstract class CallBase extends NOperandInstr implements ClosureAccepting
         return dontInline;
     }
 
-    private static CallSite getCallSiteFor(CallType callType, String name, boolean potentiallyRefined) {
+    protected static CallSite getCallSiteFor(CallType callType, String name, boolean potentiallyRefined) {
         assert callType != null: "Calltype should never be null";
 
         if (potentiallyRefined) return new RefinedCachingCallSite(name, callType);
@@ -202,6 +201,9 @@ public abstract class CallBase extends NOperandInstr implements ClosureAccepting
             modifiedScope = true;
             scope.getFlags().add(USES_EVAL);
 
+            // If eval contains a return then a nonlocal may pass through (e.g. def foo; eval "return 1"; end).
+            scope.getFlags().add(CAN_RECEIVE_NONLOCAL_RETURNS);
+
             // If this method receives a closure arg, and this call is an eval that has more than 1 argument,
             // it could be using the closure as a binding -- which means it could be using pretty much any
             // variable from the caller's binding!
@@ -223,6 +225,9 @@ public abstract class CallBase extends NOperandInstr implements ClosureAccepting
                 scope.getFlags().add(REQUIRES_DYNSCOPE);
             }
         }
+
+        // Refined scopes require dynamic scope in order to get the static scope
+        if (potentiallyRefined) scope.getFlags().add(REQUIRES_DYNSCOPE);
 
         return modifiedScope;
     }

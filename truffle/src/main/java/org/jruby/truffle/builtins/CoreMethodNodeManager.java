@@ -9,10 +9,10 @@
  */
 package org.jruby.truffle.builtins;
 
+import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.dsl.GeneratedBy;
 import com.oracle.truffle.api.dsl.NodeFactory;
-import com.oracle.truffle.api.nodes.NodeUtil;
 import com.oracle.truffle.api.object.DynamicObject;
 import com.oracle.truffle.api.source.SourceSection;
 import org.jruby.runtime.Visibility;
@@ -30,19 +30,23 @@ import org.jruby.truffle.language.RubyConstant;
 import org.jruby.truffle.language.RubyGuards;
 import org.jruby.truffle.language.RubyNode;
 import org.jruby.truffle.language.RubyRootNode;
+import org.jruby.truffle.language.RubySourceSection;
 import org.jruby.truffle.language.arguments.MissingArgumentBehavior;
+import org.jruby.truffle.language.arguments.ProfileArgumentNode;
 import org.jruby.truffle.language.arguments.ReadBlockNode;
 import org.jruby.truffle.language.arguments.ReadCallerFrameNode;
 import org.jruby.truffle.language.arguments.ReadPreArgumentNode;
 import org.jruby.truffle.language.arguments.ReadRemainingArgumentsNode;
+import org.jruby.truffle.language.arguments.ReadSelfNode;
 import org.jruby.truffle.language.methods.Arity;
 import org.jruby.truffle.language.methods.ExceptionTranslatingNode;
 import org.jruby.truffle.language.methods.InternalMethod;
 import org.jruby.truffle.language.methods.SharedMethodInfo;
-import org.jruby.truffle.language.objects.SelfNode;
 import org.jruby.truffle.language.objects.SingletonClassNode;
-import org.jruby.truffle.language.parser.jruby.Translator;
+import org.jruby.truffle.parser.Translator;
 import org.jruby.truffle.platform.UnsafeGroup;
+import org.jruby.truffle.tools.ChaosNodeGen;
+import org.jruby.truffle.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -50,34 +54,40 @@ import java.util.List;
 
 public class CoreMethodNodeManager {
 
+    private static final boolean CHECK_AMBIGUOUS_OPTIONAL_ARGS = System.getenv("TRUFFLE_CHECK_AMBIGUOUS_OPTIONAL_ARGS") != null;
     private final RubyContext context;
     private final SingletonClassNode singletonClassNode;
+    private final PrimitiveManager primitiveManager;
 
-    public CoreMethodNodeManager(RubyContext context, SingletonClassNode singletonClassNode) {
+    public CoreMethodNodeManager(RubyContext context, SingletonClassNode singletonClassNode, PrimitiveManager primitiveManager) {
         this.context = context;
         this.singletonClassNode = singletonClassNode;
+        this.primitiveManager = primitiveManager;
     }
 
     public void addCoreMethodNodes(List<? extends NodeFactory<? extends RubyNode>> nodeFactories) {
+        String moduleName = null;
+        DynamicObject module = null;
+
         for (NodeFactory<? extends RubyNode> nodeFactory : nodeFactories) {
-            final GeneratedBy generatedBy = nodeFactory.getClass().getAnnotation(GeneratedBy.class);
-            final Class<?> nodeClass = generatedBy.value();
-            final CoreClass classAnnotation = nodeClass.getEnclosingClass().getAnnotation(CoreClass.class);
+            final Class<?> nodeClass = nodeFactory.getClass().getAnnotation(GeneratedBy.class).value();
             final CoreMethod methodAnnotation = nodeClass.getAnnotation(CoreMethod.class);
+            Primitive primitiveAnnotation;
 
             if (methodAnnotation != null) {
-                addCoreMethod(new MethodDetails(classAnnotation, methodAnnotation, nodeFactory));
+                if (module == null) {
+                    moduleName = nodeClass.getEnclosingClass().getAnnotation(CoreClass.class).value();
+                    module = getModule(moduleName);
+                }
+                addCoreMethod(module, new MethodDetails(moduleName, methodAnnotation, nodeFactory));
+            } else if ((primitiveAnnotation = nodeClass.getAnnotation(Primitive.class)) != null) {
+                primitiveManager.addPrimitive(nodeFactory, primitiveAnnotation);
             }
         }
     }
 
-    private DynamicObject getSingletonClass(Object object) {
-        return singletonClassNode.executeSingletonClass(object);
-    }
-
-    private void addCoreMethod(MethodDetails methodDetails) {
+    private DynamicObject getModule(String fullName) {
         DynamicObject module;
-        String fullName = methodDetails.getClassAnnotation().value();
 
         if (fullName.equals("main")) {
             module = getSingletonClass(context.getCoreLibrary().getMainObject());
@@ -88,7 +98,7 @@ public class CoreMethodNodeManager {
                 final RubyConstant constant = ModuleOperations.lookupConstant(context, module, moduleName);
 
                 if (constant == null) {
-                    throw new RuntimeException(String.format("Module %s not found when adding core library", moduleName));
+                    throw new RuntimeException(StringUtils.format("Module %s not found when adding core library", moduleName));
                 }
 
                 module = (DynamicObject) constant.getValue();
@@ -96,11 +106,18 @@ public class CoreMethodNodeManager {
         }
 
         assert RubyGuards.isRubyModule(module) : fullName;
+        return module;
+    }
 
+    private DynamicObject getSingletonClass(Object object) {
+        return singletonClassNode.executeSingletonClass(object);
+    }
+
+    private void addCoreMethod(DynamicObject module, MethodDetails methodDetails) {
         final CoreMethod method = methodDetails.getMethodAnnotation();
 
-        final List<String> names = Arrays.asList(method.names());
-        assert names.size() >= 1;
+        final String[] names = method.names();
+        assert names.length >= 1;
 
         final Visibility visibility = method.visibility();
 
@@ -122,39 +139,36 @@ public class CoreMethodNodeManager {
             System.err.println("WARNING: Either onSingleton or constructor for " + methodDetails.getIndicativeName());
         }
 
-        final RubyRootNode rootNode = makeGenericMethod(context, methodDetails);
+        final SharedMethodInfo sharedMethodInfo = makeSharedMethodInfo(context, methodDetails);
+        final CallTarget callTarget = makeGenericMethod(context, methodDetails, sharedMethodInfo);
 
         if (method.isModuleFunction()) {
-            addMethod(context, module, rootNode, names, Visibility.PRIVATE);
-            addMethod(context, getSingletonClass(module), rootNode, names, Visibility.PUBLIC);
+            addMethod(context, module, sharedMethodInfo, callTarget, names, Visibility.PRIVATE);
+            addMethod(context, getSingletonClass(module), sharedMethodInfo, callTarget, names, Visibility.PUBLIC);
         } else if (method.onSingleton() || method.constructor()) {
-            addMethod(context, getSingletonClass(module), rootNode, names, visibility);
+            addMethod(context, getSingletonClass(module), sharedMethodInfo, callTarget, names, visibility);
         } else {
-            addMethod(context, module, rootNode, names, visibility);
+            addMethod(context, module, sharedMethodInfo, callTarget, names, visibility);
         }
     }
 
-    private static void addMethod(RubyContext context, DynamicObject module, RubyRootNode rootNode, List<String> names, final Visibility originalVisibility) {
+    private static void addMethod(RubyContext context, DynamicObject module, SharedMethodInfo sharedMethodInfo, CallTarget callTarget, String[] names, Visibility originalVisibility) {
         assert RubyGuards.isRubyModule(module);
 
         for (String name : names) {
-            final RubyRootNode rootNodeCopy = NodeUtil.cloneNode(rootNode);
-
             Visibility visibility = originalVisibility;
             if (ModuleOperations.isMethodPrivateFromName(name)) {
                 visibility = Visibility.PRIVATE;
             }
+            final InternalMethod method = new InternalMethod(context, sharedMethodInfo, name, module, visibility, callTarget);
 
-            final InternalMethod method = new InternalMethod(rootNodeCopy.getSharedMethodInfo(), name, module, visibility, Truffle.getRuntime().createCallTarget(rootNodeCopy));
-
-            Layouts.MODULE.getFields(module).addMethod(context, null, method.withVisibility(visibility).withName(name));
+            Layouts.MODULE.getFields(module).addMethod(context, null, method);
         }
     }
 
-    private static RubyRootNode makeGenericMethod(RubyContext context, MethodDetails methodDetails) {
+    private static SharedMethodInfo makeSharedMethodInfo(RubyContext context, MethodDetails methodDetails) {
         final CoreMethod method = methodDetails.getMethodAnnotation();
-
-        final SourceSection sourceSection = SourceSection.createUnavailable("core", String.format("%s#%s", methodDetails.getClassAnnotation().value(), method.names()[0]));
+        final String methodName = methodDetails.getIndicativeName();
 
         final int required = method.required();
         final int optional = method.optional();
@@ -163,55 +177,77 @@ public class CoreMethodNodeManager {
 
         final Arity arity = new Arity(required, optional, method.rest());
 
-        final SharedMethodInfo sharedMethodInfo = new SharedMethodInfo(sourceSection, LexicalScope.NONE, arity, method.names()[0], false, null, context.getOptions().CORE_ALWAYS_CLONE, alwaysInline, needsCallerFrame);
+        return new SharedMethodInfo(context.getCoreLibrary().getSourceSection(), LexicalScope.NONE, arity, methodName, false, null, context.getOptions().CORE_ALWAYS_CLONE, alwaysInline, needsCallerFrame);
+    }
 
+    private static CallTarget makeGenericMethod(RubyContext context, MethodDetails methodDetails, SharedMethodInfo sharedMethodInfo) {
+        final CoreMethod method = methodDetails.getMethodAnnotation();
+
+        final SourceSection sourceSection = sharedMethodInfo.getSourceSection();
+        final RubySourceSection rubySourceSection = new RubySourceSection(sourceSection);
+
+        final RubyNode methodNode = createCoreMethodNode(context, sourceSection, methodDetails.getNodeFactory(), method);
+
+        if (CHECK_AMBIGUOUS_OPTIONAL_ARGS) {
+            AmbiguousOptionalArgumentChecker.verifyNoAmbiguousOptionalArguments(methodDetails);
+        }
+
+        final RubyNode checkArity = Translator.createCheckArityNode(context, sourceSection.getSource(), rubySourceSection, sharedMethodInfo.getArity());
+
+        RubyNode node;
+        if (!isSafe(context, method.unsafe())) {
+            node = new UnsafeNode(context, sourceSection);
+        } else {
+            node = Translator.sequence(context, sourceSection.getSource(), rubySourceSection, Arrays.asList(checkArity, methodNode));
+            node = transformResult(method, node);
+        }
+
+        RubyNode bodyNode = new ExceptionTranslatingNode(context, sourceSection, node, method.unsupportedOperationBehavior());
+
+        if (context.getOptions().CHAOS) {
+            bodyNode = ChaosNodeGen.create(bodyNode);
+        }
+
+        final RubyRootNode rootNode = new RubyRootNode(context, sourceSection, null, sharedMethodInfo, bodyNode, false);
+
+        return Truffle.getRuntime().createCallTarget(rootNode);
+    }
+
+    public static RubyNode createCoreMethodNode(RubyContext context, SourceSection sourceSection, NodeFactory<? extends RubyNode> nodeFactory, CoreMethod method) {
         final List<RubyNode> argumentsNodes = new ArrayList<>();
 
-        if (needsCallerFrame) {
+        if (method.needsCallerFrame()) {
             argumentsNodes.add(new ReadCallerFrameNode());
         }
 
-        // Do not use needsSelf=true in module functions, it is either the module/class or the instance.
-        // Usage of needsSelf is quite rare for singleton methods (except constructors).
-        final boolean needsSelf = method.constructor() || (!method.isModuleFunction() && !method.onSingleton() && method.needsSelf());
+        final boolean needsSelf = needsSelf(method);
 
         if (needsSelf) {
-            RubyNode readSelfNode = new SelfNode(context, sourceSection);
-
-            if (method.lowerFixnumSelf()) {
-                readSelfNode = FixnumLowerNodeGen.create(context, sourceSection, readSelfNode);
-            }
-
-            if (method.raiseIfFrozenSelf()) {
-                readSelfNode = new RaiseIfFrozenNode(readSelfNode);
-            }
-
-            argumentsNodes.add(readSelfNode);
+            RubyNode readSelfNode = new ProfileArgumentNode(new ReadSelfNode());
+            argumentsNodes.add(transformArgument(context, sourceSection, method, readSelfNode, 0));
         }
 
-        for (int n = 0; n < arity.getPreRequired() + arity.getOptional(); n++) {
-            RubyNode readArgumentNode = new ReadPreArgumentNode(n, MissingArgumentBehavior.UNDEFINED);
+        final int required = method.required();
+        final int optional = method.optional();
+        final int nArgs = required + optional;
 
-            if (ArrayUtils.contains(method.lowerFixnumParameters(), n)) {
-                readArgumentNode = FixnumLowerNodeGen.create(context, sourceSection, readArgumentNode);
-            }
-
-            if (ArrayUtils.contains(method.raiseIfFrozenParameters(), n)) {
-                readArgumentNode = new RaiseIfFrozenNode(readArgumentNode);
-            }
-
-            argumentsNodes.add(readArgumentNode);
+        for (int n = 0; n < nArgs; n++) {
+            RubyNode readArgumentNode = new ProfileArgumentNode(new ReadPreArgumentNode(n, MissingArgumentBehavior.UNDEFINED));
+            argumentsNodes.add(transformArgument(context, sourceSection, method, readArgumentNode, n + 1));
         }
         if (method.rest()) {
-            argumentsNodes.add(new ReadRemainingArgumentsNode(arity.getPreRequired() + arity.getOptional()));
+            argumentsNodes.add(new ReadRemainingArgumentsNode(nArgs));
         }
 
         if (method.needsBlock()) {
             argumentsNodes.add(new ReadBlockNode(NotProvided.INSTANCE));
         }
 
-        final RubyNode methodNode;
-        final NodeFactory<? extends RubyNode> nodeFactory = methodDetails.getNodeFactory();
+        return createNodeFromFactory(context, sourceSection, nodeFactory, argumentsNodes);
+    }
+
+    public static <T> T createNodeFromFactory(RubyContext context, SourceSection sourceSection, NodeFactory<? extends T> nodeFactory, List<RubyNode> argumentsNodes) {
+        final T methodNode;
         List<List<Class<?>>> signatures = nodeFactory.getNodeSignatures();
 
         assert signatures.size() == 1;
@@ -237,34 +273,44 @@ public class CoreMethodNodeManager {
             }
         }
 
-        if (System.getenv("TRUFFLE_CHECK_AMBIGUOUS_OPTIONAL_ARGS") != null) {
-            AmbiguousOptionalArgumentChecker.verifyNoAmbiguousOptionalArguments(methodDetails);
+        return methodNode;
+    }
+
+    public static boolean needsSelf(CoreMethod method) {
+        // Do not use needsSelf=true in module functions, it is either the module/class or the instance.
+        // Usage of needsSelf is quite rare for singleton methods (except constructors).
+        return method.constructor() || (!method.isModuleFunction() && !method.onSingleton() && method.needsSelf());
+    }
+
+    private static RubyNode transformArgument(RubyContext context, SourceSection sourceSection, CoreMethod method, RubyNode argument, int n) {
+        if (ArrayUtils.contains(method.lowerFixnum(), n)) {
+            argument = FixnumLowerNodeGen.create(null, null, argument);
         }
 
-        final RubyNode checkArity = Translator.createCheckArityNode(context, sourceSection, arity);
-
-        RubyNode sequence;
-
-        if (!isSafe(context, method.unsafe())) {
-            sequence = new UnsafeNode(context, sourceSection);
-        } else {
-            sequence = Translator.sequence(context, sourceSection, Arrays.asList(checkArity, methodNode));
-
-            if (method.returnsEnumeratorIfNoBlock()) {
-                // TODO BF 3-18-2015 Handle multiple method names correctly
-                sequence = new ReturnEnumeratorIfNoBlockNode(method.names()[0], sequence);
-            }
-
-            if (method.taintFromSelf() || method.taintFromParameter() != -1) {
-                sequence = new TaintResultNode(method.taintFromSelf(),
-                        method.taintFromParameter(),
-                        sequence);
-            }
+        if (n == 0 && method.raiseIfFrozenSelf()) {
+            argument = new RaiseIfFrozenNode(context, sourceSection, argument);
         }
 
-        final ExceptionTranslatingNode exceptionTranslatingNode = new ExceptionTranslatingNode(context, sourceSection, sequence, method.unsupportedOperationBehavior());
+        return argument;
+    }
 
-        return new RubyRootNode(context, sourceSection, null, sharedMethodInfo, exceptionTranslatingNode, false);
+    private static RubyNode transformResult(CoreMethod method, RubyNode node) {
+        if (!method.enumeratorSize().isEmpty()) {
+            assert !method.returnsEnumeratorIfNoBlock(): "Only one of enumeratorSize or returnsEnumeratorIfNoBlock can be specified";
+            // TODO BF 6-27-2015 Handle multiple method names correctly
+            node = new EnumeratorSizeNode(method.enumeratorSize(), method.names()[0], node);
+        } else if (method.returnsEnumeratorIfNoBlock()) {
+            // TODO BF 3-18-2015 Handle multiple method names correctly
+            node = new ReturnEnumeratorIfNoBlockNode(method.names()[0], node);
+        }
+
+        if (method.taintFrom() != -1) {
+            final boolean taintFromSelf = method.taintFrom() == 0;
+            final int taintFromArg = taintFromSelf ? -1 : method.taintFrom() - 1;
+            node = new TaintResultNode(taintFromSelf, taintFromArg, node);
+        }
+
+        return node;
     }
 
     public static boolean isSafe(RubyContext context, UnsafeGroup[] groups) {
@@ -314,29 +360,21 @@ public class CoreMethodNodeManager {
     }
 
     public void allMethodInstalled() {
-        if (System.getenv("TRUFFLE_CHECK_AMBIGUOUS_OPTIONAL_ARGS") != null &&
-            !AmbiguousOptionalArgumentChecker.SUCCESS) {
+        if (CHECK_AMBIGUOUS_OPTIONAL_ARGS && !AmbiguousOptionalArgumentChecker.SUCCESS) {
             System.exit(1);
         }
     }
 
     public static class MethodDetails {
 
-        private final CoreClass classAnnotation;
+        private final String moduleName;
         private final CoreMethod methodAnnotation;
         private final NodeFactory<? extends RubyNode> nodeFactory;
 
-        public MethodDetails(CoreClass classAnnotation, CoreMethod methodAnnotation, NodeFactory<? extends RubyNode> nodeFactory) {
-            assert classAnnotation != null;
-            assert methodAnnotation != null;
-            assert nodeFactory != null;
-            this.classAnnotation = classAnnotation;
+        public MethodDetails(String moduleName, CoreMethod methodAnnotation, NodeFactory<? extends RubyNode> nodeFactory) {
+            this.moduleName = moduleName;
             this.methodAnnotation = methodAnnotation;
             this.nodeFactory = nodeFactory;
-        }
-
-        public CoreClass getClassAnnotation() {
-            return classAnnotation;
         }
 
         public CoreMethod getMethodAnnotation() {
@@ -348,7 +386,7 @@ public class CoreMethodNodeManager {
         }
 
         public String getIndicativeName() {
-            return classAnnotation.value() + "#" + methodAnnotation.names()[0];
+            return moduleName + "#" + methodAnnotation.names()[0];
         }
     }
 

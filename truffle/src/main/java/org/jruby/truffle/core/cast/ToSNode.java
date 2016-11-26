@@ -35,12 +35,12 @@ public abstract class ToSNode extends RubyNode {
         callToSNode = DispatchHeadNodeFactory.createMethodCall(context, true);
     }
 
-    protected DynamicObject kernelToS(VirtualFrame frame, Object object) {
+    protected DynamicObject kernelToS(Object object) {
         if (kernelToSNode == null) {
-            CompilerDirectives.transferToInterpreter();
-            kernelToSNode = insert(KernelNodesFactory.ToSNodeFactory.create(getContext(), getSourceSection(), null));
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            kernelToSNode = insert(KernelNodesFactory.ToSNodeFactory.create(getContext(), null, null));
         }
-        return kernelToSNode.executeToS(frame, object);
+        return kernelToSNode.executeToS(object);
     }
 
     @Specialization(guards = "isRubyString(string)")
@@ -50,7 +50,7 @@ public abstract class ToSNode extends RubyNode {
 
     @Specialization(guards = "!isRubyString(object)", rewriteOn = UnexpectedResultException.class)
     public DynamicObject toS(VirtualFrame frame, Object object) throws UnexpectedResultException {
-        final Object value = callToSNode.call(frame, object, "to_s", null);
+        final Object value = callToSNode.call(frame, object, "to_s");
 
         if (RubyGuards.isRubyString(value)) {
             return (DynamicObject) value;
@@ -61,12 +61,12 @@ public abstract class ToSNode extends RubyNode {
 
     @Specialization(guards = "!isRubyString(object)")
     public DynamicObject toSFallback(VirtualFrame frame, Object object) {
-        final Object value = callToSNode.call(frame, object, "to_s", null);
+        final Object value = callToSNode.call(frame, object, "to_s");
 
         if (RubyGuards.isRubyString(value)) {
             return (DynamicObject) value;
         } else {
-            return kernelToS(frame, object);
+            return kernelToS(object);
         }
     }
 

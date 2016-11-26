@@ -15,7 +15,6 @@ import com.oracle.truffle.api.object.DynamicObject;
 import org.jruby.truffle.RubyContext;
 import org.jruby.truffle.core.cast.BooleanCastNode;
 import org.jruby.truffle.core.cast.BooleanCastNodeGen;
-import org.jruby.truffle.language.control.RaiseException;
 
 public class CallDispatchHeadNode extends DispatchHeadNode {
 
@@ -36,21 +35,20 @@ public class CallDispatchHeadNode extends DispatchHeadNode {
     }
 
     public CallDispatchHeadNode(RubyContext context, boolean ignoreVisibility, MissingBehavior missingBehavior) {
-        super(context, ignoreVisibility, missingBehavior, DispatchAction.CALL_METHOD);
+        super(context, ignoreVisibility, false, missingBehavior, DispatchAction.CALL_METHOD);
     }
 
-    public Object call(
+    public Object call(VirtualFrame frame, Object receiver, Object method, Object... arguments) {
+        return dispatch(frame, receiver, method, null, arguments);
+    }
+
+    public Object callWithBlock(
             VirtualFrame frame,
-            Object receiverObject,
-            Object methodName,
-            DynamicObject blockObject,
-            Object... argumentsObjects) {
-        return dispatch(
-                frame,
-                receiverObject,
-                methodName,
-                blockObject,
-                argumentsObjects);
+            Object receiver,
+            Object method,
+            DynamicObject block,
+            Object... arguments) {
+        return dispatch(frame, receiver, method, block, arguments);
     }
 
     public boolean callBoolean(
@@ -60,55 +58,11 @@ public class CallDispatchHeadNode extends DispatchHeadNode {
             DynamicObject blockObject,
             Object... argumentsObjects) {
         if (booleanCastNode == null) {
-            CompilerDirectives.transferToInterpreter();
-            booleanCastNode = insert(BooleanCastNodeGen.create(context, getSourceSection(), null));
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            booleanCastNode = insert(BooleanCastNodeGen.create(null));
         }
         return booleanCastNode.executeBoolean(frame,
                 dispatch(frame, receiverObject, methodName, blockObject, argumentsObjects));
-    }
-
-    public double callFloat(
-            VirtualFrame frame,
-            Object receiverObject,
-            Object methodName,
-            DynamicObject blockObject,
-            Object... argumentsObjects) {
-        final Object value = call(frame, receiverObject, methodName, blockObject, argumentsObjects);
-
-        if (value instanceof Double) {
-            return (double) value;
-        }
-
-        CompilerDirectives.transferToInterpreter();
-        if (value == DispatchNode.MISSING) {
-            throw new RaiseException(context.getCoreExceptions().typeErrorCantConvertInto(receiverObject, "Float", this));
-        } else {
-            throw new RaiseException(context.getCoreExceptions().typeErrorCantConvertTo(receiverObject, "Float", (String) methodName, value, this));
-        }
-    }
-
-    public long callLongFixnum(
-            VirtualFrame frame,
-            Object receiverObject,
-            Object methodName,
-            DynamicObject blockObject,
-            Object... argumentsObjects) {
-        final Object value = call(frame, receiverObject, methodName, blockObject, argumentsObjects);
-
-        if (value instanceof Integer) {
-            return (int) value;
-        }
-
-        if (value instanceof Long) {
-            return (long) value;
-        }
-
-        CompilerDirectives.transferToInterpreter();
-        if (value == DispatchNode.MISSING) {
-            throw new RaiseException(context.getCoreExceptions().typeErrorCantConvertInto(receiverObject, "Fixnum", this));
-        } else {
-            throw new RaiseException(context.getCoreExceptions().typeErrorCantConvertTo(receiverObject, "Fixnum", (String) methodName, value, this));
-        }
     }
 
 }

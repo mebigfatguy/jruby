@@ -124,7 +124,7 @@ public class NativeException extends RubyException {
             trace[i] = RubyString.newString(runtime, line.toString());
         }
         System.arraycopy(rTrace.toJavaArrayMaybeUnsafe(), 0, trace, jTrace.length, rTrace.size());
-        return RubyArray.newArrayNoCopy(runtime, trace);
+        return RubyArray.newArrayMayCopy(runtime, trace);
     }
 
     @Deprecated // not used
@@ -167,13 +167,18 @@ public class NativeException extends RubyException {
     }
 
     @Override
+    @SuppressWarnings("deprecation")
     public final IRubyObject getMessage() {
         if (message == null) {
             if (messageAsJavaString == null) {
-                return message = getRuntime().getNil();
+                message = getRuntime().getNil();
+            } else {
+                message = getRuntime().newString(messageAsJavaString);
             }
-            return message = getRuntime().newString(messageAsJavaString);
+
+            return message;
         }
+
         return message;
     }
 

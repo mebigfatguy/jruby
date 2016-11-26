@@ -31,6 +31,7 @@ public class CheckStdoutVariableTypeNode extends RubyNode {
         this.child = child;
     }
 
+    @Override
     public Object execute(VirtualFrame frame) {
         final Object childValue = child.execute(frame);
 
@@ -44,7 +45,7 @@ public class CheckStdoutVariableTypeNode extends RubyNode {
 
     private DoesRespondDispatchHeadNode getRespondToWriteNode() {
         if (respondToWriteNode == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             respondToWriteNode = insert(new DoesRespondDispatchHeadNode(getContext(), false));
         }
 

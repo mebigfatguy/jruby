@@ -3,6 +3,7 @@ package org.jruby.util.io;
 import org.jcodings.Encoding;
 import org.jcodings.EncodingDB;
 import org.jcodings.Ptr;
+import org.jcodings.ascii.AsciiTables;
 import org.jcodings.specific.ASCIIEncoding;
 import org.jcodings.specific.USASCIIEncoding;
 import org.jcodings.specific.UTF16BEEncoding;
@@ -47,7 +48,9 @@ import org.jruby.util.Sprintf;
 import org.jruby.util.StringSupport;
 import org.jruby.util.TypeConverter;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 public class EncodingUtils {
     public static final int ECONV_DEFAULT_NEWLINE_DECORATOR = Platform.IS_WINDOWS ? EConvFlags.UNIVERSAL_NEWLINE_DECORATOR : 0;
@@ -185,7 +188,7 @@ public class EncodingUtils {
                 fmode_p[0] = OpenFile.READABLE;
                 oflags_p[0] = ModeFlags.RDONLY;
             } else {
-                intmode = TypeConverter.checkIntegerType(runtime, vmode(vmodeAndVperm_p), "to_int");
+                intmode = TypeConverter.checkIntegerType(context, vmode(vmodeAndVperm_p));
 
                 if (!intmode.isNil()) {
                     vmode(vmodeAndVperm_p, intmode);
@@ -384,20 +387,14 @@ public class EncodingUtils {
 
     // mri: parse_mode_enc
     public static void parseModeEncoding(ThreadContext context, IOEncodable ioEncodable, String option, int[] fmode_p) {
-        Ruby runtime = context.runtime;
+        final Ruby runtime = context.runtime;
         EncodingService service = runtime.getEncodingService();
-        Encoding idx2;
         Encoding intEnc, extEnc;
         if (fmode_p == null) fmode_p = new int[]{0};
-        String estr;
 
-        String[] encs = option.split(":", 2);
+        List<String> encs = StringSupport.split(option, ':', 2);
 
-        if (encs.length == 2) {
-            estr = encs[0];
-        } else {
-            estr = option;
-        }
+        String estr = encs.size() == 2 ? encs.get(0) : option;
 
         if (estr.toLowerCase().startsWith("bom|")) {
             estr = estr.substring(4);
@@ -410,7 +407,7 @@ public class EncodingUtils {
             }
         }
 
-        Encoding idx = service.findEncodingNoError(new ByteList(estr.getBytes()));
+        Encoding idx = service.findEncodingNoError(new ByteList(estr.getBytes(), false));
 
         if (idx == null) {
             runtime.getWarnings().warn("Unsupported encoding " + estr + " ignored");
@@ -420,16 +417,17 @@ public class EncodingUtils {
         }
 
         intEnc = null;
-        if (encs.length == 2) {
-            if (encs[1].equals("-")) {
+        if (encs.size() == 2) {
+            String istr = encs.get(1);
+            if (istr.equals("-")) {
                 intEnc = null;
             } else {
-                idx2 = service.getEncodingFromString(encs[1]);
-                if (idx2 == null) {
-                    context.runtime.getWarnings().warn("ignoring internal encoding " + idx2 + ": it is identical to external encoding " + idx);
+                idx = service.getEncodingFromString(istr);
+                if (idx == null) {
+                    runtime.getWarnings().warn("ignoring internal encoding " + idx + ": it is identical to external encoding " + idx);
                     intEnc = null;
                 } else {
-                    intEnc = idx2;
+                    intEnc = idx;
                 }
             }
         }
@@ -1120,6 +1118,65 @@ public class EncodingUtils {
         return str;
     }
 
+    public static List<String> encodingNames(byte[] name, int p, int end) {
+        final List<String> names = new ArrayList<String>();
+
+        Encoding enc = ASCIIEncoding.INSTANCE;
+        int s = p;
+
+        int code = name[s] & 0xff;
+        if (enc.isDigit(code)) return names;
+
+        boolean hasUpper = false;
+        boolean hasLower = false;
+        if (enc.isUpper(code)) {
+            hasUpper = true;
+            while (++s < end && (enc.isAlnum(name[s] & 0xff) || name[s] == (byte)'_')) {
+                if (enc.isLower(name[s] & 0xff)) hasLower = true;
+            }
+        }
+
+        boolean isValid = false;
+        if (s >= end) {
+            isValid = true;
+            names.add(new String(name, p, end));
+        }
+
+        if (!isValid || hasLower) {
+            if (!hasLower || !hasUpper) {
+                do {
+                    code = name[s] & 0xff;
+                    if (enc.isLower(code)) hasLower = true;
+                    if (enc.isUpper(code)) hasUpper = true;
+                } while (++s < end && (!hasLower || !hasUpper));
+            }
+
+            byte[]constName = new byte[end - p];
+            System.arraycopy(name, p, constName, 0, end - p);
+            s = 0;
+            code = constName[s] & 0xff;
+
+            if (!isValid) {
+                if (enc.isLower(code)) constName[s] = AsciiTables.ToUpperCaseTable[code];
+                for (; s < constName.length; ++s) {
+                    if (!enc.isAlnum(constName[s] & 0xff)) constName[s] = (byte)'_';
+                }
+                if (hasUpper) {
+                    names.add(new String(constName, 0, constName.length));
+                }
+            }
+            if (hasLower) {
+                for (s = 0; s < constName.length; ++s) {
+                    code = constName[s] & 0xff;
+                    if (enc.isLower(code)) constName[s] = AsciiTables.ToUpperCaseTable[code];
+                }
+                names.add(new String(constName, 0, constName.length));
+            }
+        }
+
+        return names;
+    }
+
     public interface ResizeFunction {
         /**
          * Resize the destination, returning the new begin offset.
@@ -1651,15 +1708,35 @@ public class EncodingUtils {
         encCrStrBufCat(runtime, str, ptr.getUnsafeBytes(), ptr.getBegin(), ptr.getRealSize(),
                 enc, StringSupport.CR_UNKNOWN, null);
     }
+
+    public static void encStrBufCat(Ruby runtime, RubyString str, ByteList ptr) {
+        encCrStrBufCat(runtime, str, ptr.getUnsafeBytes(), ptr.getBegin(), ptr.getRealSize(),
+                ptr.getEncoding(), StringSupport.CR_UNKNOWN, null);
+    }
+
+    public static void encStrBufCat(Ruby runtime, RubyString str, byte[] ptrBytes) {
+        encCrStrBufCat(runtime, str, ptrBytes, 0, ptrBytes.length, USASCIIEncoding.INSTANCE, StringSupport.CR_UNKNOWN, null);
+    }
+
+    public static void encStrBufCat(Ruby runtime, RubyString str, byte[] ptrBytes, Encoding enc) {
+        encCrStrBufCat(runtime, str, ptrBytes, 0, ptrBytes.length, enc, StringSupport.CR_UNKNOWN, null);
+    }
+
     public static void encStrBufCat(Ruby runtime, RubyString str, byte[] ptrBytes, int ptr, int len, Encoding enc) {
         encCrStrBufCat(runtime, str, ptrBytes, ptr, len,
                 enc, StringSupport.CR_UNKNOWN, null);
+    }
+
+    public static void encStrBufCat(Ruby runtime, RubyString str, CharSequence cseq) {
+        byte[] utf8 = RubyEncoding.encodeUTF8(cseq.toString());
+        encCrStrBufCat(runtime, str, utf8, 0, utf8.length, UTF8Encoding.INSTANCE, StringSupport.CR_UNKNOWN, null);
     }
 
     // rb_enc_cr_str_buf_cat
     public static void encCrStrBufCat(Ruby runtime, CodeRangeable str, ByteList ptr, Encoding ptrEnc, int ptr_cr, int[] ptr_cr_ret) {
         encCrStrBufCat(runtime, str, ptr.getUnsafeBytes(), ptr.getBegin(), ptr.getRealSize(), ptrEnc, ptr_cr, ptr_cr_ret);
     }
+
     public static void encCrStrBufCat(Ruby runtime, CodeRangeable str, byte[] ptrBytes, int ptr, int len, Encoding ptrEnc, int ptr_cr, int[] ptr_cr_ret) {
         Encoding strEnc = str.getByteList().getEncoding();
         Encoding resEnc;
@@ -1936,16 +2013,24 @@ public class EncodingUtils {
     }
 
     // rb_enc_codepoint_len
-    public static int encCodepointLength(Ruby runtime, byte[] pBytes, int p, int e, int[] len_p, Encoding enc) {
+    public static int encCodepointLength(byte[] pBytes, int p, int e, int[] len_p, Encoding enc) {
         int r;
         if (e <= p)
-            throw runtime.newArgumentError("empty string");
+            throw new IllegalArgumentException("empty string");
         r = StringSupport.preciseLength(enc, pBytes, p, e);
         if (!StringSupport.MBCLEN_CHARFOUND_P(r)) {
-            throw runtime.newArgumentError("invalid byte sequence in " + enc);
+            throw new IllegalArgumentException("invalid byte sequence in " + enc);
         }
         if (len_p != null) len_p[0] = StringSupport.MBCLEN_CHARFOUND_LEN(r);
-        return StringSupport.codePoint(runtime, enc, pBytes, p, e);
+        return StringSupport.codePoint(enc, pBytes, p, e);
+    }
+
+    public static int encCodepointLength(Ruby runtime, byte[] pBytes, int p, int e, int[] len_p, Encoding enc) {
+        try {
+            return encCodepointLength(pBytes, p, e, len_p, enc);
+        } catch (IllegalArgumentException ex) {
+            throw runtime.newArgumentError(ex.getMessage());
+        }
     }
 
     // MRI: str_compat_and_valid

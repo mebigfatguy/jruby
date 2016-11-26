@@ -57,14 +57,14 @@ public abstract class CreateBigDecimalNode extends BigDecimalCoreMethodNode {
 
     public final DynamicObject executeCreate(VirtualFrame frame, Object value) {
         if (allocateNode == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             allocateNode = insert(DispatchHeadNodeFactory.createMethodCall(getContext(), true));
         }
 
         return executeInitialize(
                 frame,
                 value,
-                (DynamicObject) allocateNode.call(frame, getBigDecimalClass(), "allocate", null),
+                (DynamicObject) allocateNode.call(frame, getBigDecimalClass(), "allocate"),
                 NotProvided.INSTANCE);
     }
 
@@ -121,7 +121,7 @@ public abstract class CreateBigDecimalNode extends BigDecimalCoreMethodNode {
 
         final boolean raise = booleanCastNode.executeBoolean(
                 frame,
-                modeCallNode.call(frame, getBigDecimalClass(), "boolean_mode", null, exceptionConstant));
+                modeCallNode.call(frame, getBigDecimalClass(), "boolean_mode", exceptionConstant));
 
         if (raiseProfile.profile(raise)) {
             throw new RaiseException(coreExceptions().floatDomainErrorResultsToInfinity(this));
@@ -148,7 +148,7 @@ public abstract class CreateBigDecimalNode extends BigDecimalCoreMethodNode {
 
         final boolean raise = booleanCastNode.executeBoolean(
                 frame,
-                modeCallNode.call(frame, getBigDecimalClass(), "boolean_mode", null, exceptionConstant));
+                modeCallNode.call(frame, getBigDecimalClass(), "boolean_mode", exceptionConstant));
 
         if (raiseProfile.profile(raise)) {
             throw new RaiseException(coreExceptions().floatDomainErrorResultsToNaN(this));
@@ -296,7 +296,7 @@ public abstract class CreateBigDecimalNode extends BigDecimalCoreMethodNode {
     }
 
     protected BooleanCastNode createBooleanCastNode() {
-        return BooleanCastNodeGen.create(getContext(), getSourceSection(), null);
+        return BooleanCastNodeGen.create(null);
     }
 
     protected GetIntegerConstantNode createGetIntegerConstantNode() {

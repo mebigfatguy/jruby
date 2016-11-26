@@ -49,8 +49,6 @@ import java.lang.invoke.MethodHandles;
  */
 public abstract class BlockBody {
 
-    public static final String[] EMPTY_PARAMETER_LIST = org.jruby.util.StringSupport.EMPTY_STRING_ARRAY;
-
     protected final Signature signature;
     protected volatile MethodHandle testBlockBody;
 
@@ -269,7 +267,7 @@ public abstract class BlockBody {
             // I thought only procs & lambdas can be called, and blocks are yielded to.
             if (args.length == 1) {
                 // Convert value to arg-array, unwrapping where necessary
-                args = IRRuntimeHelpers.convertValueIntoArgArray(context, args[0], signature.arityValue(), type == Block.Type.NORMAL && args[0] instanceof RubyArray);
+                args = IRRuntimeHelpers.convertValueIntoArgArray(context, args[0], signature, type == Block.Type.NORMAL && args[0] instanceof RubyArray);
             } else if (getSignature().arityValue() == 1 && !getSignature().restKwargs()) {
                 // discard excess arguments
                 args = args.length == 0 ? context.runtime.getSingleNilArray() : new IRubyObject[] { args[0] };

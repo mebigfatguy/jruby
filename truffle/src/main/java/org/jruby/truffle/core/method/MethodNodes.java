@@ -10,7 +10,6 @@
 package org.jruby.truffle.core.method;
 
 import com.oracle.truffle.api.CallTarget;
-import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.Truffle;
@@ -29,8 +28,8 @@ import org.jruby.truffle.builtins.CoreClass;
 import org.jruby.truffle.builtins.CoreMethod;
 import org.jruby.truffle.builtins.CoreMethodArrayArgumentsNode;
 import org.jruby.truffle.builtins.UnaryCoreMethodNode;
+import org.jruby.truffle.core.Hashing;
 import org.jruby.truffle.core.basicobject.BasicObjectNodes.ReferenceEqualNode;
-import org.jruby.truffle.core.basicobject.BasicObjectNodesFactory;
 import org.jruby.truffle.core.cast.ProcOrNullNode;
 import org.jruby.truffle.core.cast.ProcOrNullNodeGen;
 import org.jruby.truffle.core.proc.ProcOperations;
@@ -53,19 +52,11 @@ public abstract class MethodNodes {
     @CoreMethod(names = { "==", "eql?" }, required = 1)
     public abstract static class EqualNode extends CoreMethodArrayArgumentsNode {
 
-        @Child protected ReferenceEqualNode referenceEqualNode;
-
-        protected boolean areSame(VirtualFrame frame, Object left, Object right) {
-            if (referenceEqualNode == null) {
-                CompilerDirectives.transferToInterpreter();
-                referenceEqualNode = insert(BasicObjectNodesFactory.ReferenceEqualNodeFactory.create(null));
-            }
-            return referenceEqualNode.executeReferenceEqual(frame, left, right);
-        }
-
         @Specialization(guards = "isRubyMethod(b)")
-        public boolean equal(VirtualFrame frame, DynamicObject a, DynamicObject b) {
-            return areSame(frame, Layouts.METHOD.getReceiver(a), Layouts.METHOD.getReceiver(b)) && Layouts.METHOD.getMethod(a) == Layouts.METHOD.getMethod(b);
+        public boolean equal(VirtualFrame frame, DynamicObject a, DynamicObject b,
+                @Cached("create()") ReferenceEqualNode referenceEqualNode) {
+            return referenceEqualNode.executeReferenceEqual(Layouts.METHOD.getReceiver(a), Layouts.METHOD.getReceiver(b)) &&
+                    Layouts.METHOD.getMethod(a) == Layouts.METHOD.getMethod(b);
         }
 
         @Specialization(guards = "!isRubyMethod(b)")
@@ -110,6 +101,21 @@ public abstract class MethodNodes {
         @Specialization
         public DynamicObject name(DynamicObject method) {
             return getSymbol(Layouts.METHOD.getMethod(method).getName());
+        }
+
+    }
+
+    @CoreMethod(names = "hash")
+    public abstract static class HashNode extends CoreMethodArrayArgumentsNode {
+
+        @TruffleBoundary
+        @Specialization
+        public long hash(DynamicObject rubyMethod) {
+            final InternalMethod method = Layouts.METHOD.getMethod(rubyMethod);
+            long h = Hashing.start(method.getDeclaringModule().hashCode());
+            h = Hashing.update(h, Layouts.METHOD.getReceiver(rubyMethod).hashCode());
+            h = Hashing.update(h, method.getSharedMethodInfo().hashCode());
+            return Hashing.end(h);
         }
 
     }
@@ -160,7 +166,7 @@ public abstract class MethodNodes {
             } else {
                 DynamicObject file = createString(StringOperations.encodeRope(sourceSection.getSource().getName(), UTF8Encoding.INSTANCE));
                 Object[] objects = new Object[] { file, sourceSection.getStartLine() };
-                return Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), objects, objects.length);
+                return createArray(objects, objects.length);
             }
         }
 

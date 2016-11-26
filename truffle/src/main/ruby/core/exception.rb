@@ -34,26 +34,22 @@
 
 class Exception
 
-  attr_accessor :parent
-  attr_accessor :custom_backtrace
-
-  def initialize(message = nil)
-    @reason_message = message
-    @backtrace = nil
-    @custom_backtrace = nil
-  end
-
   def ==(other)
     other.instance_of?(__class__) &&
       message == other.message &&
       backtrace == other.backtrace
   end
 
+  def message
+    self.to_s
+  end
+
   def to_s
-    if @reason_message
-      @reason_message.to_s
-    else
+    msg = Truffle.invoke_primitive :exception_message, self
+    if msg.nil?
       self.class.to_s
+    else
+      msg.to_s
     end
   end
 
@@ -67,23 +63,9 @@ class Exception
     return list
   end
 
-  def message
-    @reason_message
-  end
-
   # Needed to properly implement #exception, which must clone and call
   # #initialize again, BUT not a subclasses initialize.
   alias_method :__initialize__, :initialize
-
-  def backtrace
-    return @custom_backtrace if @custom_backtrace
-
-    if backtrace?
-      awesome_backtrace.to_mri
-    else
-      nil
-    end
-  end
 
   # Indicates if the Exception has a backtrace set
   def backtrace?
@@ -113,12 +95,6 @@ class Exception
     else
       set_backtrace(ctx)
     end
-  end
-
-  # This is important, because I subclass can just override #to_s and calling
-  # #message will call it. Using an alias doesn't achieve that.
-  def message
-    to_s
   end
 
   def inspect
@@ -189,6 +165,9 @@ class ArgumentError < StandardError
   end
 end
 
+class UncaughtThrowError < ArgumentError
+end
+
 class IndexError < StandardError
 end
 
@@ -205,22 +184,20 @@ class LocalJumpError < StandardError
 end
 
 class NameError < StandardError
-  attr_reader :name
 
   def initialize(*args)
-    super(args.shift)
-    @name = args.shift
+    name = args.size > 1 ? args.pop : nil
+    super(*args)
+    Truffle.invoke_primitive :name_error_set_name, self, name
   end
 end
 
 class NoMethodError < NameError
-  attr_reader :name
-  attr_reader :args
 
   def initialize(*arguments)
-    super(arguments.shift)
-    @name = arguments.shift
-    @args = arguments.shift
+    args = arguments.size > 2 ? arguments.pop : nil
+    super(*arguments) # TODO BJF Jul 24, 2016 Need to handle NoMethodError.new(1,2,3,4)
+    Truffle.invoke_primitive :no_method_error_set_args, self, args
   end
 end
 
@@ -259,10 +236,6 @@ class NotImplementedError < ScriptError
 end
 
 class Interrupt < SignalException
-  def initialize(*args)
-    super(args.shift)
-    @name = args.shift
-  end
 end
 
 class IOError < StandardError
@@ -279,15 +252,6 @@ class SyntaxError < ScriptError
   attr_accessor :line
   attr_accessor :file
   attr_accessor :code
-
-  def self.from(message, column, line, code, file)
-    exc = new message
-    exc.file = file
-    exc.line = line
-    exc.column = column
-    exc.code = code
-    exc
-  end
 
   def reason
     @reason_message
@@ -333,7 +297,6 @@ end
 
 class SystemCallError < StandardError
 
-  attr_reader :errno
 
   def self.errno_error(message, errno, location)
     Truffle.primitive :exception_errno_error
@@ -341,7 +304,7 @@ class SystemCallError < StandardError
   end
 
   # We use .new here because when errno is set, we attempt to
-  # lookup and return a subclass of SystemCallError, specificly,
+  # lookup and return a subclass of SystemCallError, specifically,
   # one of the Errno subclasses.
   def self.new(*args)
     # This method is used 2 completely different ways. One is when it's called
@@ -415,7 +378,7 @@ class SystemCallError < StandardError
   def initialize(*args)
     kls = self.class
     message, errno, location = args
-    @errno = errno
+    Truffle.invoke_primitive :exception_set_errno, self, errno
 
     msg = "unknown error"
     msg << " @ #{StringValue(location)}" if location

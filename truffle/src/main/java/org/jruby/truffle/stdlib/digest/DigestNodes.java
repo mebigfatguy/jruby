@@ -19,11 +19,11 @@ import org.jruby.truffle.RubyContext;
 import org.jruby.truffle.builtins.CoreClass;
 import org.jruby.truffle.builtins.CoreMethod;
 import org.jruby.truffle.builtins.CoreMethodArrayArgumentsNode;
-import org.jruby.truffle.core.rope.BytesVisitor;
 import org.jruby.truffle.core.rope.CodeRange;
 import org.jruby.truffle.core.rope.Rope;
 import org.jruby.truffle.core.rope.RopeOperations;
 import org.jruby.truffle.core.string.StringOperations;
+import org.jruby.truffle.language.control.JavaException;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -36,13 +36,13 @@ public abstract class DigestNodes {
         try {
             return MessageDigest.getInstance(name);
         } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
+            throw new JavaException(e);
         }
     }
 
     private static DynamicObject createDigest(RubyContext context, DigestAlgorithm algorithm) {
         return Layouts.DIGEST.createDigest(
-                Layouts.CLASS.getInstanceFactory(context.getCoreLibrary().getDigestClass()),
+                context.getCoreLibrary().getDigestFactory(),
                 algorithm,
                 getMessageDigestInstance(algorithm.getName()));
     }
@@ -104,14 +104,7 @@ public abstract class DigestNodes {
         public DynamicObject update(DynamicObject digestObject, DynamicObject message) {
             final MessageDigest digest = Layouts.DIGEST.getDigest(digestObject);
 
-            RopeOperations.visitBytes(StringOperations.rope(message), new BytesVisitor() {
-
-                @Override
-                public void accept(byte[] bytes, int offset, int length) {
-                    digest.update(bytes, offset, length);
-                }
-
-            });
+            RopeOperations.visitBytes(StringOperations.rope(message), (bytes, offset, length) -> digest.update(bytes, offset, length));
 
             return digestObject;
         }
@@ -147,7 +140,7 @@ public abstract class DigestNodes {
             try {
                 clonedDigest = (MessageDigest) digest.clone();
             } catch (CloneNotSupportedException e) {
-                throw new RuntimeException(e);
+                throw new JavaException(e);
             }
 
             return clonedDigest.digest();

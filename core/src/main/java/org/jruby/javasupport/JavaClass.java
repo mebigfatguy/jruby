@@ -43,17 +43,21 @@ import org.jruby.RubyClass;
 import org.jruby.RubyInteger;
 import org.jruby.RubyModule;
 import org.jruby.RubyString;
+import org.jruby.RubySymbol;
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.exceptions.RaiseException;
+import org.jruby.java.addons.ClassJavaAddons;
 import org.jruby.java.proxies.ArrayJavaProxy;
 import org.jruby.java.proxies.ConcreteJavaProxy;
+import org.jruby.java.proxies.JavaProxy;
 import org.jruby.java.util.ArrayUtils;
 import org.jruby.runtime.Helpers;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.ByteList;
+import org.jruby.util.CodegenUtils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -63,12 +67,10 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.util.List;
-import org.jruby.util.CodegenUtils;
 
 import static org.jruby.RubyModule.undefinedMethodMessage;
 
-@JRubyClass(name="Java::JavaClass", parent="Java::JavaObject")
+@JRubyClass(name="Java::JavaClass", parent="Java::JavaObject", include = "Comparable")
 public class JavaClass extends JavaObject {
 
     public static final Class[] EMPTY_CLASS_ARRAY = new Class[0];
@@ -100,26 +102,18 @@ public class JavaClass extends JavaObject {
         return (RubyClass) Java.getProxyClass(getRuntime(), javaClass());
     }
 
-    public void addProxyExtender(final IRubyObject extender) {
-        Ruby runtime = getRuntime();
-
-        if (!extender.respondsTo("extend_proxy")) {
-            throw runtime.newTypeError("proxy extender must have an extend_proxy method");
+    private IRubyObject addProxyExtender(final ThreadContext context, final IRubyObject extender) {
+        if ( ! extender.respondsTo("extend_proxy") ) {
+            throw context.runtime.newTypeError("proxy extender must have an extend_proxy method");
         }
-
-        ThreadContext context = runtime.getCurrentContext();
-        RubyModule proxy = Java.getProxyClass(runtime, javaClass());
-        extendProxy(context, extender, proxy);
-    }
-
-    private void extendProxy(final ThreadContext context, final IRubyObject extender, final RubyModule proxy) {
-        extender.callMethod(context, "extend_proxy", proxy);
+        RubyModule proxy = Java.getProxyClass(context.runtime, javaClass());
+        return extender.callMethod(context, "extend_proxy", proxy);
     }
 
     @JRubyMethod(required = 1)
     public IRubyObject extend_proxy(final ThreadContext context, IRubyObject extender) {
-        addProxyExtender(extender);
-        return getRuntime().getNil();
+        addProxyExtender(context, extender);
+        return context.nil;
     }
 
     public static JavaClass get(final Ruby runtime, final Class<?> klass) {
@@ -136,7 +130,7 @@ public class JavaClass extends JavaObject {
         for ( int i = classes.length; --i >= 0; ) {
             javaClasses[i] = get(runtime, classes[i]);
         }
-        return RubyArray.newArrayNoCopy(runtime, javaClasses);
+        return RubyArray.newArrayMayCopy(runtime, javaClasses);
     }
 
     public static RubyClass createJavaClassClass(final Ruby runtime, final RubyModule Java) {
@@ -144,65 +138,147 @@ public class JavaClass extends JavaObject {
     }
 
     static RubyClass createJavaClassClass(final Ruby runtime, final RubyModule Java, final RubyClass JavaObject) {
-        // FIXME: Determine if a real allocator is needed here. Do people want to extend
-        // JavaClass? Do we want them to do that? Can you Class.new(JavaClass)? Should
-        // you be able to?
-        // TODO: NOT_ALLOCATABLE_ALLOCATOR is probably ok here, since we don't intend for people to monkey with
+        // TODO: Determine if a real allocator is needed here. Do people want to extend
+        // JavaClass? Do we want them to do that? Can you Class.new(JavaClass)? Should you be able to?
+        // NOTE: NOT_ALLOCATABLE_ALLOCATOR is probably OK here, since we don't intend for people to monkey with
         // this type and it can't be marshalled. Confirm. JRUBY-415
-        RubyClass JavaCLass = Java.defineClassUnder("JavaClass", JavaObject, ObjectAllocator.NOT_ALLOCATABLE_ALLOCATOR);
+        RubyClass JavaClass = Java.defineClassUnder("JavaClass", JavaObject, ObjectAllocator.NOT_ALLOCATABLE_ALLOCATOR);
 
-        JavaCLass.includeModule(runtime.getModule("Comparable"));
+        JavaClass.includeModule(runtime.getModule("Comparable"));
 
-        JavaCLass.defineAnnotatedMethods(JavaClass.class);
+        JavaClass.defineAnnotatedMethods(JavaClass.class);
 
-        JavaCLass.getMetaClass().undefineMethod("new");
-        JavaCLass.getMetaClass().undefineMethod("allocate");
+        JavaClass.getMetaClass().undefineMethod("new");
+        JavaClass.getMetaClass().undefineMethod("allocate");
 
-        return JavaCLass;
+        return JavaClass;
     }
 
     public final Class javaClass() {
         return (Class<?>) getValue();
     }
 
+    /**
+     * Get the associated JavaClass for a proxy module.
+     *
+     * The passed module/class is assumed to be a Java proxy module/class!
+     * @param context
+     * @param proxy
+     * @return class
+     */
     public static Class<?> getJavaClass(final ThreadContext context, final RubyModule proxy) {
-        final IRubyObject javaClass = Helpers.invoke(context, proxy, "java_class");
-        return ((JavaClass) javaClass).javaClass();
+        return ((JavaClass) java_class(context, proxy)).javaClass();
     }
 
+    /**
+     * Retieve a JavaClass if the passed module/class is a Java proxy.
+     * @param context
+     * @param proxy
+     * @return class or null if not a Java proxy
+     *
+     * @note Class objects have a java_class method but they're not considered Java proxies!
+     */
     public static Class<?> getJavaClassIfProxy(final ThreadContext context, final RubyModule proxy) {
-        final IRubyObject javaClass;
-        try {
-            javaClass = Helpers.invoke(context, proxy, "java_class");
+        JavaClass javaClass = getJavaClassIfProxyImpl(context, proxy);
+        return javaClass == null ? null : javaClass.javaClass();
+    }
+
+    private static JavaClass getJavaClassIfProxyImpl(final ThreadContext context, final RubyModule proxy) {
+        final IRubyObject java_class = java_class(context, proxy);
+        return ( java_class instanceof JavaClass ) ? (JavaClass) java_class : null;
+    }
+
+    // expected to handle Java proxy (Ruby) sub-classes as well
+    public static boolean isProxyType(final ThreadContext context, final RubyModule proxy) {
+        return getJavaClassIfProxyImpl(context, proxy) != null;
+        //IRubyObject java_class = proxy.getInstanceVariable("@java_class");
+        //return (java_class != null && java_class.isTrue()) ||
+        //        proxy.respondsTo("java_class"); // not all proxy types have @java_class set
+    }
+
+    /**
+     * Returns the (reified or proxied) Java class if the passed Ruby module/class has one.
+     * @param context
+     * @param type
+     * @return Java proxy class, Java reified class or nil
+     */
+    public static IRubyObject java_class(final ThreadContext context, final RubyModule type) {
+        IRubyObject java_class = type.getInstanceVariable("@java_class");
+        if ( java_class == null ) { // || java_class.isNil()
+            if ( type.respondsTo("java_class") ) { // NOTE: quite bad since built-in Ruby classes will return
+                // a Ruby Java proxy for java.lang.Class while Java proxies will return a JavaClass instance !
+                java_class = Helpers.invoke(context, type, "java_class");
+            }
+            else java_class = context.nil; // we return != null (just like callMethod would)
         }
-        catch (RuntimeException e) {
-            // clear $! since our "java_class" invoke above may have failed and set it
-            context.setErrorInfo(context.nil);
+        return java_class;
+    }
+
+    /*
+    public static Class<?> getJavaClass(final ThreadContext context, final RubyModule type) {
+        IRubyObject java_class = java_class(context, type);
+        if ( java_class == context.nil ) return null;
+        return resolveClassType(context, java_class).javaClass();
+    } */
+
+    /**
+     * Resolves a Java class from a passed type parameter.
+     *
+     * Uisng the rules accepted by `to_java(type)` in Ruby land.
+     * @param context
+     * @param type
+     * @return resolved type or null if resolution failed
+     */
+    public static JavaClass resolveType(final ThreadContext context, final IRubyObject type) {
+        if (type instanceof RubyString || type instanceof RubySymbol) {
+            final Ruby runtime = context.runtime;
+            final String className = type.toString();
+            JavaClass targetType = runtime.getJavaSupport().getNameClassMap().get(className);
+            if ( targetType == null ) targetType = JavaClass.forNameVerbose(runtime, className);
+            return targetType;
+        }
+        return resolveClassType(context, type);
+    }
+
+    // this should handle the type returned from Class#java_class
+    private static JavaClass resolveClassType(final ThreadContext context, final IRubyObject type) {
+        if (type instanceof JavaProxy) { // due Class#java_class wrapping
+            final Object wrapped = ((JavaProxy) type).getObject();
+            if ( wrapped instanceof Class ) return JavaClass.get(context.runtime, (Class) wrapped);
             return null;
         }
-        return ( javaClass instanceof JavaClass ) ? ((JavaClass) javaClass).javaClass() : null;
+        if (type instanceof JavaClass) {
+            return (JavaClass) type;
+        }
+        if (type instanceof RubyModule) { // assuming a proxy module/class e.g. to_java(java.lang.String)
+            return getJavaClassIfProxyImpl(context, (RubyModule) type);
+        }
+        return null;
     }
 
     static boolean isPrimitiveName(final String name) {
-        return JavaUtil.PRIMITIVE_CLASSES.containsKey(name);
+        return JavaUtil.getPrimitiveClass(name) != null;
     }
 
-    public static synchronized JavaClass forNameVerbose(Ruby runtime, String className) {
-        Class <?> klass = null;
-        if (className.indexOf('.') == -1 && Character.isLowerCase(className.charAt(0))) {
+    public static JavaClass forNameVerbose(Ruby runtime, String className) {
+        Class<?> klass = null; // "boolean".length() == 7
+        if (className.length() < 8 && Character.isLowerCase(className.charAt(0))) {
             // one word type name that starts lower-case...it may be a primitive type
-            klass = JavaUtil.PRIMITIVE_CLASSES.get(className);
+            klass = JavaUtil.getPrimitiveClass(className);
         }
-
-        if (klass == null) {
-            klass = runtime.getJavaSupport().loadJavaClassVerbose(className);
+        synchronized (JavaClass.class) {
+            if (klass == null) {
+                klass = runtime.getJavaSupport().loadJavaClassVerbose(className);
+            }
+            return JavaClass.get(runtime, klass);
         }
-        return JavaClass.get(runtime, klass);
     }
 
-    public static synchronized JavaClass forNameQuiet(Ruby runtime, String className) {
-        Class klass = runtime.getJavaSupport().loadJavaClassQuiet(className);
-        return JavaClass.get(runtime, klass);
+    public static JavaClass forNameQuiet(Ruby runtime, String className) {
+        synchronized (JavaClass.class) {
+            Class<?> klass = runtime.getJavaSupport().loadJavaClassQuiet(className);
+            return JavaClass.get(runtime, klass);
+        }
     }
 
     @JRubyMethod(name = "for_name", required = 1, meta = true)
@@ -724,29 +800,29 @@ public class JavaClass extends JavaObject {
     public JavaObject new_array(IRubyObject lengthArgument) {
         if (lengthArgument instanceof RubyInteger) {
             // one-dimensional array
-            int length = (int) ((RubyInteger) lengthArgument).getLongValue();
+            int length = ((RubyInteger) lengthArgument).getIntValue();
             return new JavaArray(getRuntime(), Array.newInstance(javaClass(), length));
-        } else if (lengthArgument instanceof RubyArray) {
+        }
+        else if (lengthArgument instanceof RubyArray) {
             // n-dimensional array
-            List list = ((RubyArray)lengthArgument).getList();
-            int length = list.size();
+            IRubyObject[] aryLengths = ((RubyArray)lengthArgument).toJavaArrayMaybeUnsafe();
+            final int length = aryLengths.length;
             if (length == 0) {
                 throw getRuntime().newArgumentError("empty dimensions specifier for java array");
             }
-            int[] dimensions = new int[length];
+            final int[] dimensions = new int[length];
             for (int i = length; --i >= 0; ) {
-                IRubyObject dimensionLength = (IRubyObject)list.get(i);
-                if ( !(dimensionLength instanceof RubyInteger) ) {
-                    throw getRuntime()
-                    .newTypeError(dimensionLength, getRuntime().getInteger());
+                IRubyObject dimLength = aryLengths[i];
+                if ( ! ( dimLength instanceof RubyInteger ) ) {
+                    throw getRuntime().newTypeError(dimLength, getRuntime().getInteger());
                 }
-                dimensions[i] = (int) ((RubyInteger) dimensionLength).getLongValue();
+                dimensions[i] = ((RubyInteger) dimLength).getIntValue();
             }
             return new JavaArray(getRuntime(), Array.newInstance(javaClass(), dimensions));
-        } else {
+        }
+        else {
             throw getRuntime().newArgumentError(
-                    "invalid length or dimensions specifier for java array" +
-            " - must be Integer or Array of Integer");
+                "invalid length or dimensions specifier for java array - must be Integer or Array of Integer");
         }
     }
 

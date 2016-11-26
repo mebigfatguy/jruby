@@ -9,21 +9,39 @@
  */
 package org.jruby.truffle.tools.callgraph;
 
+import com.oracle.truffle.api.TruffleOptions;
 import org.jruby.truffle.language.RubyRootNode;
 import org.jruby.truffle.language.methods.SharedMethodInfo;
 
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 public class CallGraph {
 
     private final Map<SharedMethodInfo, Method> sharedMethodInfoToMethod = new HashMap<>();
     private final Map<RubyRootNode, MethodVersion> rootNodeToMethodVersion = new HashMap<>();
+    private final Map<RubyRootNode, Map<String, Set<String>>> localTypes = new HashMap<>();
 
     public synchronized void registerRootNode(RubyRootNode rootNode) {
         rootNodeToMethodVersion(rootNode);
+    }
+
+    public synchronized void recordLocalWrite(RubyRootNode rootNode, String name, String type) {
+        if (name.equals("foo_a") && type.equals("Object")) {
+            throw new UnsupportedOperationException();
+        }
+
+        final Map<String, Set<String>> rootNodeLocalTypes = localTypes.computeIfAbsent(rootNode,
+                (k) -> new HashMap<>());
+
+        final Set<String> rootNodeLocalTypeSet = rootNodeLocalTypes.computeIfAbsent(name,
+                (k) -> new HashSet<>());
+
+        rootNodeLocalTypeSet.add(type);
     }
 
     public Method sharedMethodInfoToMethod(SharedMethodInfo sharedMethodInfo) {
@@ -52,10 +70,20 @@ public class CallGraph {
         return Collections.unmodifiableCollection(sharedMethodInfoToMethod.values());
     }
 
-    public void resolve() {
-        for (MethodVersion methodVersion : rootNodeToMethodVersion.values()) {
-            methodVersion.resolve();
+    public Map<String, Set<String>> getLocalTypes(RubyRootNode rootNode) {
+        final Map<String, Set<String>> rootNodeLocalTypes = localTypes.get(rootNode);
+
+        if (rootNodeLocalTypes == null) {
+            return Collections.<String, Set<String>>emptyMap();
+        } else {
+            return rootNodeLocalTypes;
         }
     }
 
+    public void resolve() {
+        // Call graph currently doesn't work with AOT due to runtime reflection.
+        if (!TruffleOptions.AOT) {
+            rootNodeToMethodVersion.values().forEach(MethodVersion::resolve);
+        }
+    }
 }

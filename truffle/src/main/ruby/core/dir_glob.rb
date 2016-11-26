@@ -249,7 +249,8 @@ class Dir
       last_match = nil
 
       while match = %r!/+!.match_from(str, start)
-        cur_start, cur_end = match.full
+        cur_start = match.byte_begin(0)
+        cur_end = match.byte_end(0)
         ret << str.byteslice(start, cur_start - start)
         ret << str.byteslice(cur_start, cur_end - cur_start)
 
@@ -319,29 +320,14 @@ class Dir
       last
     end
 
-    def self.run(node, matches=[])
+    def self.run(node, all_matches=[])
+      matches = []
       env = Environment.new(matches)
       node.call env, nil
-      env.matches
-    end
-
-    total = Rubinius::Config['glob.cache']
-
-    case total
-    when Fixnum
-      if total == 0
-        @glob_cache = nil
-      else
-        @glob_cache = Rubinius::LRUCache.new(total)
-      end
-    when false
-      @glob_cache = nil
-    else
-      @glob_cache = Rubinius::LRUCache.new(50)
-    end
-
-    def self.glob_cache
-      @glob_cache
+      # Truffle: ensure glob'd files are always sorted in consistent order,
+      # it avoids headaches due to platform differences (OS X is sorted, Linux not).
+      matches.sort!
+      all_matches.concat(matches)
     end
 
     def self.glob(pattern, flags, matches=[])
@@ -375,30 +361,13 @@ class Dir
         return matches
       end
 
-      ec_key = nil
-
-      if gc = @glob_cache
-        ec_key = [pattern, flags]
-        if patterns = gc.retrieve(ec_key)
-          patterns.each do |node|
-            run node, matches
-          end
-
-          return matches
-        end
-      end
-
       if pattern.include? "{"
         patterns = compile(pattern, flags)
-
-        gc.set ec_key, patterns if ec_key
 
         patterns.each do |node|
           run node, matches
         end
       elsif node = single_compile(pattern, flags)
-        gc.set ec_key, [node] if ec_key
-
         run node, matches
       else
         matches

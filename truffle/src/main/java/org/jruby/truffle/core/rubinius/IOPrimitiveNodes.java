@@ -71,7 +71,6 @@ import org.jruby.truffle.language.control.RaiseException;
 import org.jruby.truffle.language.dispatch.CallDispatchHeadNode;
 import org.jruby.truffle.language.dispatch.DispatchHeadNodeFactory;
 import org.jruby.truffle.language.objects.AllocateObjectNode;
-import org.jruby.truffle.language.objects.AllocateObjectNodeGen;
 import org.jruby.truffle.platform.UnsafeGroup;
 import org.jruby.truffle.platform.posix.FDSet;
 import org.jruby.util.ByteList;
@@ -95,17 +94,21 @@ public abstract class IOPrimitiveNodes {
             super(context, sourceSection);
         }
 
-        protected int ensureSuccessful(int result, int errno) {
+        protected int ensureSuccessful(int result, int errno, String extra) {
             assert result >= -1;
             if (result == -1) {
                 errorProfile.enter();
-                throw new RaiseException(coreExceptions().errnoError(errno, this));
+                throw new RaiseException(coreExceptions().errnoError(errno, extra, this));
             }
             return result;
         }
 
         protected int ensureSuccessful(int result) {
-            return ensureSuccessful(result, posix().errno());
+            return ensureSuccessful(result, posix().errno(), "");
+        }
+
+        protected int ensureSuccessful(int result, String extra) {
+            return ensureSuccessful(result, posix().errno(), " - " + extra);
         }
     }
 
@@ -119,12 +122,12 @@ public abstract class IOPrimitiveNodes {
 
         public IOAllocatePrimitiveNode(RubyContext context, SourceSection sourceSection) {
             newBufferNode = DispatchHeadNodeFactory.createMethodCall(context);
-            allocateNode = AllocateObjectNodeGen.create(context, sourceSection, null, null);
+            allocateNode = AllocateObjectNode.create();
         }
 
         @Specialization
         public DynamicObject allocate(VirtualFrame frame, DynamicObject classToAllocate) {
-            final DynamicObject buffer = (DynamicObject) newBufferNode.call(frame, coreLibrary().getInternalBufferClass(), "new", null);
+            final DynamicObject buffer = (DynamicObject) newBufferNode.call(frame, coreLibrary().getInternalBufferClass(), "new");
             return allocateNode.allocate(classToAllocate, buffer, 0, 0, 0);
         }
 
@@ -184,13 +187,18 @@ public abstract class IOPrimitiveNodes {
 
     }
 
-    @Primitive(name = "io_open", needsSelf = false, lowerFixnumParameters = { 1, 2 }, unsafe = UnsafeGroup.IO)
+    @Primitive(name = "io_open", needsSelf = false, lowerFixnum = {2, 3}, unsafe = UnsafeGroup.IO)
     public static abstract class IOOpenPrimitiveNode extends IOPrimitiveArrayArgumentsNode {
 
         @TruffleBoundary(throwsControlFlowException = true)
         @Specialization(guards = "isRubyString(path)")
         public int open(DynamicObject path, int mode, int permission) {
-            return ensureSuccessful(posix().open(StringOperations.getString(getContext(), path), mode, permission));
+            String pathString = StringOperations.getString(path);
+            int fd = posix().open(pathString, mode, permission);
+            if (fd == -1) {
+                ensureSuccessful(fd, pathString);
+            }
+            return fd;
         }
 
     }
@@ -201,7 +209,7 @@ public abstract class IOPrimitiveNodes {
         @TruffleBoundary(throwsControlFlowException = true)
         @Specialization(guards = "isRubyString(path)")
         public int truncate(DynamicObject path, long length) {
-            return ensureSuccessful(posix().truncate(StringOperations.getString(getContext(), path), length));
+            return ensureSuccessful(posix().truncate(StringOperations.getString(path), length));
         }
 
     }
@@ -257,7 +265,29 @@ public abstract class IOPrimitiveNodes {
 
     }
 
-    @Primitive(name = "io_read_if_available", lowerFixnumParameters = 0, unsafe = UnsafeGroup.IO)
+
+    @Primitive(name = "io_socket_read", lowerFixnum = {1, 2, 3, 4}, unsafe = UnsafeGroup.IO)
+    public static abstract class IOSocketReadNode extends IOPrimitiveArrayArgumentsNode {
+
+        @TruffleBoundary(throwsControlFlowException = true)
+        @Specialization
+        public Object socketRead(DynamicObject io, int length, int flags, int type) {
+            final int sockfd = Layouts.IO.getDescriptor(io);
+
+            if (type != 0) {
+                throw new UnsupportedOperationException();
+            }
+
+            final ByteBuffer buffer = ByteBuffer.allocate(length);
+            final int bytesRead = getContext().getThreadManager().runUntilResult(this, () -> ensureSuccessful(nativeSockets().recvfrom(sockfd, buffer, length, flags, PointerPrimitiveNodes.NULL_POINTER, PointerPrimitiveNodes.NULL_POINTER)));
+            buffer.position(bytesRead);
+
+            return createString(new ByteList(buffer.array(), buffer.arrayOffset(), buffer.position(), false));
+        }
+
+    }
+
+    @Primitive(name = "io_read_if_available", lowerFixnum = 1, unsafe = UnsafeGroup.IO)
     public static abstract class IOReadIfAvailableNode extends IOPrimitiveArrayArgumentsNode {
 
         @TruffleBoundary(throwsControlFlowException = true)
@@ -321,14 +351,14 @@ public abstract class IOPrimitiveNodes {
         public Object reopen(VirtualFrame frame, DynamicObject file, DynamicObject io) {
             performReopen(file, io);
 
-            resetBufferingNode.call(frame, io, "reset_buffering", null);
+            resetBufferingNode.call(frame, io, "reset_buffering");
 
             return nil();
         }
 
     }
 
-    @Primitive(name = "io_reopen_path", lowerFixnumParameters = 1, unsafe = UnsafeGroup.IO)
+    @Primitive(name = "io_reopen_path", lowerFixnum = 2, unsafe = UnsafeGroup.IO)
     public static abstract class IOReopenPathPrimitiveNode extends IOPrimitiveArrayArgumentsNode {
 
         @Child private CallDispatchHeadNode resetBufferingNode;
@@ -342,7 +372,7 @@ public abstract class IOPrimitiveNodes {
         public void performReopenPath(DynamicObject self, DynamicObject path, int mode) {
             final int fdSelf = Layouts.IO.getDescriptor(self);
             final int newFdSelf;
-            final String targetPathString = StringOperations.getString(getContext(), path);
+            final String targetPathString = StringOperations.getString(path);
 
             int fdTarget = ensureSuccessful(posix().open(targetPathString, mode, 0_666));
 
@@ -356,7 +386,7 @@ public abstract class IOPrimitiveNodes {
                     if (fdTarget > 0) {
                         ensureSuccessful(posix().close(fdTarget));
                     }
-                    ensureSuccessful(result, errno); // throws
+                    ensureSuccessful(result, errno, targetPathString); // throws
                     return;
                 }
             } else {
@@ -372,7 +402,7 @@ public abstract class IOPrimitiveNodes {
         public Object reopenPath(VirtualFrame frame, DynamicObject file, DynamicObject path, int mode) {
             performReopenPath(file, path, mode);
 
-            resetBufferingNode.call(frame, file, "reset_buffering", null);
+            resetBufferingNode.call(frame, file, "reset_buffering");
 
             return nil();
         }
@@ -394,20 +424,15 @@ public abstract class IOPrimitiveNodes {
                 return rope.byteLength();
             }
 
-            RopeOperations.visitBytes(rope, new BytesVisitor() {
+            RopeOperations.visitBytes(rope, (bytes, offset, length) -> {
+                final ByteBuffer buffer = ByteBuffer.wrap(bytes, offset, length);
 
-                @Override
-                public void accept(byte[] bytes, int offset, int length) {
-                    final ByteBuffer buffer = ByteBuffer.wrap(bytes, offset, length);
+                while (buffer.hasRemaining()) {
+                    getContext().getSafepointManager().poll(IOWritePrimitiveNode.this);
 
-                    while (buffer.hasRemaining()) {
-                        getContext().getSafepointManager().poll(IOWritePrimitiveNode.this);
-
-                        int written = ensureSuccessful(posix().write(fd, buffer, buffer.remaining()));
-                        buffer.position(buffer.position() + written);
-                    }
+                    int written = ensureSuccessful(posix().write(fd, buffer, buffer.remaining()));
+                    buffer.position(buffer.position() + written);
                 }
-
             });
 
             return rope.byteLength();
@@ -419,6 +444,8 @@ public abstract class IOPrimitiveNodes {
     public static abstract class IOWriteNonBlockPrimitiveNode extends IOPrimitiveArrayArgumentsNode {
 
         static class StopWriting extends ControlFlowException {
+            private static final long serialVersionUID = 1096318435617097172L;
+
             final int bytesWritten;
 
             public StopWriting(int bytesWritten) {
@@ -507,7 +534,7 @@ public abstract class IOPrimitiveNodes {
 
         @Specialization
         public int close(VirtualFrame frame, DynamicObject io) {
-            ensureOpenNode.call(frame, io, "ensure_open", null);
+            ensureOpenNode.call(frame, io, "ensure_open");
 
             final int fd = Layouts.IO.getDescriptor(io);
 
@@ -529,7 +556,7 @@ public abstract class IOPrimitiveNodes {
 
     }
 
-    @Primitive(name = "io_seek", lowerFixnumParameters = { 0, 1 }, unsafe = UnsafeGroup.IO)
+    @Primitive(name = "io_seek", lowerFixnum = { 1, 2 }, unsafe = UnsafeGroup.IO)
     public static abstract class IOSeekPrimitiveNode extends IOPrimitiveArrayArgumentsNode {
 
         @Specialization
@@ -565,7 +592,7 @@ public abstract class IOPrimitiveNodes {
 
     }
 
-    @Primitive(name = "io_sysread", unsafe = UnsafeGroup.IO, lowerFixnumParameters = 0)
+    @Primitive(name = "io_sysread", unsafe = UnsafeGroup.IO, lowerFixnum = 1)
     public static abstract class IOSysReadPrimitiveNode extends IOPrimitiveArrayArgumentsNode {
 
         @TruffleBoundary(throwsControlFlowException = true)
@@ -599,7 +626,7 @@ public abstract class IOPrimitiveNodes {
 
     }
 
-    @Primitive(name = "io_select", needsSelf = false, lowerFixnumParameters = 3, unsafe = UnsafeGroup.IO)
+    @Primitive(name = "io_select", needsSelf = false, lowerFixnum = 4, unsafe = UnsafeGroup.IO)
     public static abstract class IOSelectPrimitiveNode extends IOPrimitiveArrayArgumentsNode {
 
         public abstract Object executeSelect(DynamicObject readables, DynamicObject writables, DynamicObject errorables, Object Timeout);
@@ -624,8 +651,13 @@ public abstract class IOPrimitiveNodes {
             return selectOneSet(writables, timeoutMicros, 2);
         }
 
+        @Specialization(guards = { "isNilOrEmpty(readables)", "isNilOrEmpty(writables)", "isRubyArray(errorables)" })
+        public Object selectErrorables(DynamicObject readables, DynamicObject writables, DynamicObject errorables, int timeoutMicros) {
+            return selectOneSet(errorables, timeoutMicros, 3);
+        }
+
         @TruffleBoundary(throwsControlFlowException = true)
-        private Object selectOneSet(DynamicObject setToSelect, int timeoutMicros, int setNb) {
+        private Object selectOneSet(DynamicObject setToSelect, final int timeoutMicros, int setNb) {
             assert setNb >= 1 && setNb <= 3;
             final Object[] readableObjects = ArrayOperations.toObjectArray(setToSelect);
             final int[] fds = getFileDescriptors(setToSelect);
@@ -642,11 +674,14 @@ public abstract class IOPrimitiveNodes {
                     }
                     final int result = callSelect(nfds, fdSet, timeoutToUse);
 
-                    if (result == 0) {
+                    if (result == 0 && timeoutMicros != 0) {
+                        // interrupted, try again
                         return null;
+                    } else {
+                        // result == 0: nothing was ready
+                        // result >  0: some were ready
+                        return result;
                     }
-
-                    return result;
                 }
 
                 private int callSelect(int nfds, FDSet fdSet, Timeval timeoutToUse) {
@@ -670,7 +705,7 @@ public abstract class IOPrimitiveNodes {
                 return nil();
             }
 
-            return Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), new Object[] {
+            return createArray(new Object[] {
                     setNb == 1 ? getSetObjects(readableObjects, fds, fdSet) : createEmptyArray(),
                     setNb == 2 ? getSetObjects(readableObjects, fds, fdSet) : createEmptyArray(),
                     setNb == 3 ? getSetObjects(readableObjects, fds, fdSet) : createEmptyArray()
@@ -678,7 +713,7 @@ public abstract class IOPrimitiveNodes {
         }
 
         public DynamicObject createEmptyArray() {
-            return Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), null, 0);
+            return createArray(null, 0);
         }
 
         private int[] getFileDescriptors(DynamicObject fileDescriptorArray) {
@@ -722,7 +757,7 @@ public abstract class IOPrimitiveNodes {
                 }
             }
 
-            return Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), setObjects, setFdsCount);
+            return createArray(setObjects, setFdsCount);
         }
 
         protected boolean isNilOrEmpty(DynamicObject fds) {

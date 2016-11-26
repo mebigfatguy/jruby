@@ -59,11 +59,11 @@ public abstract class ToIntegerNode extends FormatNode {
             "!isRubyBignum(value)"})
     public Object toInteger(VirtualFrame frame, Object value) {
         if (integerNode == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             integerNode = insert(DispatchHeadNodeFactory.createMethodCall(getContext(), true));
         }
 
-        return integerNode.call(frame, getContext().getCoreLibrary().getKernelModule(), "Integer", null, value);
+        return integerNode.call(frame, getContext().getCoreLibrary().getKernelModule(), "Integer", value);
     }
 
 }

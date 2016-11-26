@@ -28,18 +28,19 @@ import org.jcodings.Encoding;
 import org.jcodings.specific.ASCIIEncoding;
 import org.jcodings.specific.USASCIIEncoding;
 import org.jcodings.specific.UTF8Encoding;
-import org.jruby.Ruby;
-import org.jruby.RubyEncoding;
 import org.jruby.truffle.Layouts;
 import org.jruby.truffle.RubyContext;
+import org.jruby.truffle.core.encoding.EncodingManager;
 import org.jruby.truffle.core.string.StringOperations;
 import org.jruby.truffle.language.RubyGuards;
+import org.jruby.truffle.language.control.RaiseException;
+import org.jruby.truffle.util.StringUtils;
 import org.jruby.util.ByteList;
 import org.jruby.util.Memo;
 import org.jruby.util.StringSupport;
 import org.jruby.util.io.EncodingUtils;
 
-import java.io.UnsupportedEncodingException;
+import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -51,6 +52,7 @@ import static org.jruby.truffle.core.rope.CodeRange.CR_UNKNOWN;
 import static org.jruby.truffle.core.rope.CodeRange.CR_VALID;
 
 public class RopeOperations {
+    private static final Charset UTF8 = Charset.forName("UTF-8");
 
     private static final ConcurrentHashMap<Encoding, Charset> encodingToCharsetMap = new ConcurrentHashMap<>();
 
@@ -87,8 +89,8 @@ public class RopeOperations {
             case CR_VALID: return new ValidLeafRope(bytes, encoding, characterLength);
             case CR_BROKEN: return new InvalidLeafRope(bytes, encoding);
             default: {
-                CompilerDirectives.transferToInterpreter();
-                throw new RuntimeException(String.format("Unknown code range type: %d", codeRange));
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                throw new RuntimeException(StringUtils.format("Unknown code range type: %d", codeRange));
             }
         }
     }
@@ -115,44 +117,32 @@ public class RopeOperations {
 
     @TruffleBoundary
     public static String decodeUTF8(Rope rope) {
-        return RubyEncoding.decodeUTF8(rope.getBytes(), 0, rope.byteLength());
+        return decode(UTF8, rope.getBytes(), 0, rope.byteLength());
     }
 
     @TruffleBoundary
-    public static String decodeRope(Ruby runtime, Rope value) {
+    public static String decodeUTF8(byte[] bytes, int offset, int byteLength) {
+        return decode(UTF8, bytes, offset, byteLength);
+    }
+
+    @TruffleBoundary
+    public static String decodeRope(Rope value) {
         // TODO CS 9-May-16 having recursive problems with this, so flatten up front for now
 
         value = flatten(value);
 
-        if (value instanceof LeafRope) {
-            int begin = 0;
-            int length = value.byteLength();
+        int begin = 0;
+        int length = value.byteLength();
 
-            Encoding encoding = value.getEncoding();
+        Encoding encoding = value.getEncoding();
+        Charset charset = encodingToCharsetMap.computeIfAbsent(encoding, EncodingManager::charsetForEncoding);
 
-            if (encoding == UTF8Encoding.INSTANCE) {
-                return RubyEncoding.decodeUTF8(value.getBytes(), begin, length);
-            }
+        return decode(charset, value.getBytes(), begin, length);
+    }
 
-            Charset charset = encodingToCharsetMap.get(encoding);
-
-            if (charset == null) {
-                charset = runtime.getEncodingService().charsetForEncoding(encoding);
-                encodingToCharsetMap.put(encoding, charset);
-            }
-
-            if (charset == null) {
-                try {
-                    return new String(value.getBytes(), begin, length, encoding.toString());
-                } catch (UnsupportedEncodingException uee) {
-                    return value.toString();
-                }
-            }
-
-            return RubyEncoding.decode(value.getBytes(), begin, length, charset);
-        } else {
-            throw new RuntimeException("Decoding to String is not supported for rope of type: " + value.getClass().getName());
-        }
+    @TruffleBoundary
+    public static String decode(Charset charset, byte[] bytes, int offset, int byteLength) {
+        return charset.decode(ByteBuffer.wrap(bytes, offset, byteLength)).toString();
     }
 
     // MRI: get_actual_encoding
@@ -217,15 +207,10 @@ public class RopeOperations {
 
         final Memo<Integer> resultPosition = new Memo<>(0);
 
-        visitBytes(rope, new BytesVisitor() {
-
-            @Override
-            public void accept(byte[] bytes, int offset, int length) {
-                final int resultPositionValue = resultPosition.get();
-                System.arraycopy(bytes, offset, result, resultPositionValue, length);
-                resultPosition.set(resultPositionValue + length);
-            }
-
+        visitBytes(rope, (bytes, offset1, length1) -> {
+            final int resultPositionValue = resultPosition.get();
+            System.arraycopy(bytes, offset1, result, resultPositionValue, length1);
+            resultPosition.set(resultPositionValue + length1);
         }, offset, length);
 
         return result;
@@ -398,20 +383,21 @@ public class RopeOperations {
                     }
                 } else {
                     final int bytesToCopy = substringLengths.peek();
-                    int loopCount = bytesToCopy / repeatingRope.getChild().byteLength();
+                    final int patternLength = repeatingRope.getChild().byteLength();
 
                     // Fix the offset to be appropriate for a given child. The offset is reset the first time it is
                     // consumed, so there's no need to worry about adversely affecting anything by adjusting it here.
                     offset %= repeatingRope.getChild().byteLength();
 
-                    // Adjust the loop count in case we're straddling a boundary.
-                    if (offset != 0) {
-                        loopCount++;
-                    }
+                    // The loopCount has to be precisely determined so every repetion has at least some parts used.
+                    // It has to account for the begging we don't need (offset), has to reach the end but, and must not
+                    // have extra repetitions.
+                    int loopCount = (offset + bytesToCopy + patternLength - 1 ) / patternLength;
 
-                    // TODO (nirvdrum 06-Apr-16) Rather than process the same child over and over, there may be opportunity to re-use the results from whole sections.
+                    // TODO (nirvdrum 25-Aug-2016): Flattening the rope with CR_VALID will cause a character length recalculation, even though we already know what it is. That operation should be made more optimal.
+                    final Rope flattenedChild = flatten(repeatingRope.getChild());
                     for (int i = 0; i < loopCount; i++) {
-                        workStack.push(repeatingRope.getChild());
+                        workStack.push(flattenedChild);
                     }
                 }
             } else {
@@ -471,12 +457,13 @@ public class RopeOperations {
             final Rope child = repeatingRope.getChild();
 
             int remainingLength = length;
-            int loopCount = length / child.byteLength();
+            final int patternLength = child.byteLength();
+            int loopCount = (length + patternLength - 1) / patternLength;
 
             offset %= child.byteLength();
 
-            // Adjust the loop count in case we're straddling a boundary.
-            if (offset != 0) {
+            // Adjust the loop count in case we're straddling two boundaries.
+            if (offset > 0 && ((length - (patternLength - offset)) % patternLength) > 0) {
                 loopCount++;
             }
 
@@ -518,31 +505,6 @@ public class RopeOperations {
             return (bytes[offset]&0xFF) > (otherBytes[offset]&0xFF) ? 1 : -1;
         }
         return size == other.byteLength() ? 0 : size == len ? -1 : 1;
-    }
-
-    @TruffleBoundary
-    public static Encoding areCompatible(Rope rope, Rope other) {
-        // Taken from org.jruby.util.StringSupport.areCompatible.
-
-        Encoding enc1 = rope.getEncoding();
-        Encoding enc2 = other.getEncoding();
-
-        if (enc1 == enc2) return enc1;
-
-        if (other.isEmpty()) return enc1;
-        if (rope.isEmpty()) {
-            return (enc1.isAsciiCompatible() && isAsciiOnly(other)) ? enc1 : enc2;
-        }
-
-        if (!enc1.isAsciiCompatible() || !enc2.isAsciiCompatible()) return null;
-
-        return RubyEncoding.areCompatible(enc1, rope.getCodeRange().toInt(), enc2, other.getCodeRange().toInt());
-    }
-
-    public static boolean isAsciiOnly(Rope rope) {
-        // Taken from org.jruby.util.StringSupport.isAsciiOnly.
-
-        return rope.getEncoding().isAsciiCompatible() && rope.getCodeRange() == CR_7BIT;
     }
 
     public static boolean areComparable(Rope rope, Rope other) {
@@ -589,7 +551,7 @@ public class RopeOperations {
                         || encoding == ASCIIEncoding.INSTANCE) {
                     valueRope = stringRope;
                 } else {
-                    valueRope = StringOperations.encodeRope(decodeRope(context.getJRubyRuntime(), stringRope), UTF8Encoding.INSTANCE);
+                    valueRope = StringOperations.encodeRope(decodeRope(stringRope), UTF8Encoding.INSTANCE);
                 }
             } else if (value instanceof Integer) {
                 valueRope = new LazyIntRope((int) value);
@@ -636,6 +598,21 @@ public class RopeOperations {
         // If we get this far, one must be CR_7BIT and the other must be CR_VALID, so promote to the more general code range.
 
         return CR_VALID;
+    }
+
+    @TruffleBoundary
+    public static int codePoint(RubyContext context, Rope rope, int start) {
+        byte[] bytes = rope.getBytes();
+        int p = start;
+        int end = rope.byteLength();
+        Encoding enc = rope.getEncoding();
+
+        assert p < end : "empty string";
+        int cl = StringSupport.preciseLength(enc, bytes, p, end);
+        if (cl <= 0) {
+            throw new RaiseException(context.getCoreExceptions().argumentError("invalid byte sequence in " + enc, null));
+        }
+        return enc.mbcToCode(bytes, p, end);
     }
 
 }

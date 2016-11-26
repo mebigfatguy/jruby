@@ -52,7 +52,6 @@ public abstract class TaintNode extends RubyNode {
         return object;
     }
 
-
     @Specialization(guards = "isRubySymbol(object) || isNil(object)")
     public Object taintNilOrSymbol(DynamicObject object) {
         return object;
@@ -64,14 +63,14 @@ public abstract class TaintNode extends RubyNode {
         @Cached("createWriteTaintNode()") WriteObjectFieldNode writeTaintNode) {
 
         if (isTaintedNode == null) {
-            CompilerDirectives.transferToInterpreter();
-            isTaintedNode = insert(IsTaintedNodeGen.create(getContext(), getSourceSection(), null));
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            isTaintedNode = insert(IsTaintedNodeGen.create(getContext(), null, null));
         }
 
         if (!isTaintedNode.executeIsTainted(object)) {
             if (isFrozenNode == null) {
-                CompilerDirectives.transferToInterpreter();
-                isFrozenNode = insert(IsFrozenNodeGen.create(getContext(), getSourceSection(), null));
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                isFrozenNode = insert(IsFrozenNodeGen.create(getContext(), null, null));
             }
 
             if (isFrozenNode.executeIsFrozen(object)) {

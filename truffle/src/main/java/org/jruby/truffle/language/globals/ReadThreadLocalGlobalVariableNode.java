@@ -51,8 +51,8 @@ public class ReadThreadLocalGlobalVariableNode extends RubyNode {
 
     private ThreadLocalObjectNode getThreadLocalVariablesObjectNode() {
         if (threadLocalVariablesObjectNode == null) {
-            CompilerDirectives.transferToInterpreter();
-            threadLocalVariablesObjectNode = insert(ThreadLocalObjectNodeGen.create(getContext(), getSourceSection()));
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            threadLocalVariablesObjectNode = insert(ThreadLocalObjectNodeGen.create(getContext(), null));
         }
 
         return threadLocalVariablesObjectNode;
@@ -60,7 +60,7 @@ public class ReadThreadLocalGlobalVariableNode extends RubyNode {
 
     private ReadObjectFieldNode getReadNode() {
         if (readNode == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             readNode = insert(ReadObjectFieldNodeGen.create(name, nil()));
         }
 

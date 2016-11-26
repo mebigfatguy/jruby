@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 
+source test/truffle/common.sh.inc
+
 set -e
 
-bin/jruby bin/gem install execjs -v 2.6.0
-ruby -X+T -Ilib/ruby/gems/shared/gems/execjs-2.6.0/lib test/truffle/gems/execjs/checkruntime.rb
-ruby -X+T -Ilib/ruby/gems/shared/gems/execjs-2.6.0/lib test/truffle/gems/execjs/simple.rb
-ruby -X+T -Ilib/ruby/gems/shared/gems/execjs-2.6.0/lib test/truffle/gems/execjs/coffeescript.rb
+GEM_HOME=${GEM_HOME:-lib/ruby/gems/shared}
+
+jt ruby -I$GEM_HOME/gems/execjs-2.6.0/lib test/truffle/gems/execjs/checkruntime.rb
+jt ruby -I$GEM_HOME/gems/execjs-2.6.0/lib test/truffle/gems/execjs/simple.rb
+jt ruby -I$GEM_HOME/gems/execjs-2.6.0/lib test/truffle/gems/execjs/coffeescript.rb

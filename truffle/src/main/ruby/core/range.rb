@@ -53,12 +53,16 @@ class Range
       self.exclude_end? == other.exclude_end?
   end
 
-  alias_method :eql?, :==
+  def eql?(other)
+    return true if equal? other
+
+    other.kind_of?(Range) and
+        self.first.eql?(other.first) and
+        self.last.eql?(other.last) and
+        self.exclude_end? == other.exclude_end?
+  end
 
   attr_reader_specific :excl, :exclude_end?
-
-  attr_reader :begin
-  attr_reader :end
 
   def bsearch
     return to_enum :bsearch unless block_given?
@@ -206,7 +210,8 @@ class Range
   end
 
   def inspect
-    "#{self.begin.inspect}#{exclude_end? ? "..." : ".."}#{self.end.inspect}"
+    result = "#{self.begin.inspect}#{exclude_end? ? "..." : ".."}#{self.end.inspect}"
+    Rubinius::Type.infect(result, self)
   end
 
   def last(n=undefined)
@@ -281,27 +286,8 @@ class Range
   end
 
   def to_s
-    "#{self.begin}#{exclude_end? ? "..." : ".."}#{self.end}"
-  end
-
-  def to_a_internal
-    return super unless self.begin.kind_of? Fixnum and self.end.kind_of? Fixnum
-
-    fin = self.end
-    fin += 1 unless exclude_end?
-
-    size = fin - self.begin
-    return [] if size <= 0
-
-    ary = Array.new(size)
-
-    i = 0
-    while i < size
-      ary[i] = self.begin + i
-      i += 1
-    end
-
-    ary
+    result = "#{self.begin}#{exclude_end? ? "..." : ".."}#{self.end}"
+    Rubinius::Type.infect(result, self)
   end
 
   def cover?(value)

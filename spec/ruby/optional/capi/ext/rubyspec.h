@@ -123,12 +123,16 @@
 
 /* Constants */
 #define HAVE_RB_CARRAY                     1
+#ifndef RUBY_INTEGER_UNIFICATION
 #define HAVE_RB_CBIGNUM                    1
+#endif
 #define HAVE_RB_CCLASS                     1
 #define HAVE_RB_CDATA                      1
 #define HAVE_RB_CFALSECLASS                1
 #define HAVE_RB_CFILE                      1
+#ifndef RUBY_INTEGER_UNIFICATION
 #define HAVE_RB_CFIXNUM                    1
+#endif
 #define HAVE_RB_CFLOAT                     1
 #define HAVE_RB_CHASH                      1
 #define HAVE_RB_CINTEGER                   1
@@ -469,6 +473,7 @@
 #define HAVE_RB_OBJ_IS_KIND_OF             1
 #define HAVE_RB_OBJ_TAINT                  1
 #define HAVE_RB_OBJ_METHOD                 1
+#define HAVE_RB_OBJ_METHOD_ARITY           1
 #define HAVE_RB_REQUIRE                    1
 #define HAVE_RB_RESPOND_TO                 1
 #define HAVE_RB_OBJ_RESPOND_TO             1

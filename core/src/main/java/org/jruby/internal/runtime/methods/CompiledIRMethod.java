@@ -5,15 +5,11 @@ import org.jruby.internal.runtime.AbstractIRMethod;
 import org.jruby.ir.IRMethod;
 import org.jruby.ir.IRScope;
 import org.jruby.ir.interpreter.InterpreterContext;
-import org.jruby.ir.persistence.IRDumper;
 import org.jruby.ir.runtime.IRRuntimeHelpers;
 import org.jruby.parser.StaticScope;
 import org.jruby.runtime.ArgumentDescriptor;
-import org.jruby.runtime.Arity;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.Helpers;
-import org.jruby.runtime.PositionAware;
-import org.jruby.runtime.Signature;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.Visibility;
 import org.jruby.runtime.builtin.IRubyObject;
@@ -87,7 +83,7 @@ public class CompiledIRMethod extends AbstractIRMethod {
     public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject[] args, Block block) {
         if (!hasExplicitCallProtocol) return callNoProtocol(context, self, name, args, block);
 
-        if (hasKwargs) IRRuntimeHelpers.frobnicateKwargsArgument(context, args, getSignature().required());
+        if (hasKwargs) args = IRRuntimeHelpers.frobnicateKwargsArgument(context, args, getSignature().required());
 
         return invokeExact(this.variable, context, staticScope, self, args, block, implementationClass, name);
     }
@@ -133,7 +129,7 @@ public class CompiledIRMethod extends AbstractIRMethod {
         RubyModule implementationClass = this.implementationClass;
         pre(context, staticScope, implementationClass, self, name, block);
 
-        if (hasKwargs) IRRuntimeHelpers.frobnicateKwargsArgument(context, args, getSignature().required());
+        if (hasKwargs) args = IRRuntimeHelpers.frobnicateKwargsArgument(context, args, getSignature().required());
 
         try {
             return invokeExact(this.variable, context, staticScope, self, args, block, implementationClass, name);
@@ -191,11 +187,6 @@ public class CompiledIRMethod extends AbstractIRMethod {
             return invokeExact(this.specific, context, staticScope, self, arg0, arg1, arg2, block, implementationClass, name);
         }
         finally { post(context); }
-    }
-
-    @Override
-    public DynamicMethod dup() {
-        return new CompiledIRMethod(variable, specific, specificArity, method, getVisibility(), implementationClass, hasKwargs);
     }
 
     public String getFile() {

@@ -35,10 +35,8 @@ package org.jruby.truffle.core.string;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.object.DynamicObject;
 import org.jcodings.Encoding;
-import org.jruby.RubyEncoding;
 import org.jruby.truffle.Layouts;
 import org.jruby.truffle.RubyContext;
 import org.jruby.truffle.core.array.ArrayOperations;
@@ -47,10 +45,12 @@ import org.jruby.truffle.core.rope.CodeRange;
 import org.jruby.truffle.core.rope.Rope;
 import org.jruby.truffle.core.rope.RopeOperations;
 import org.jruby.truffle.language.RubyGuards;
-import org.jruby.truffle.language.control.RaiseException;
+import org.jruby.truffle.util.ByteListUtils;
+import org.jruby.truffle.util.StringUtils;
 import org.jruby.util.ByteList;
-import org.jruby.util.CodeRangeable;
 
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
 import java.nio.charset.Charset;
 
 public abstract class StringOperations {
@@ -70,13 +70,14 @@ public abstract class StringOperations {
     }
 
     // Since ByteList.toString does not decode properly
-    @CompilerDirectives.TruffleBoundary
-    public static String getString(RubyContext context, DynamicObject string) {
-        return RopeOperations.decodeRope(context.getJRubyRuntime(), StringOperations.rope(string));
+    @TruffleBoundary
+    public static String getString(DynamicObject string) {
+        return RopeOperations.decodeRope(StringOperations.rope(string));
     }
 
-    public static StringCodeRangeableWrapper getCodeRangeableReadWrite(final DynamicObject string) {
-        return new StringCodeRangeableWrapper(string) {
+    public static StringCodeRangeableWrapper getCodeRangeableReadWrite(final DynamicObject string,
+                                                                       final EncodingNodes.CheckEncodingNode checkEncodingNode) {
+        return new StringCodeRangeableWrapper(string, checkEncodingNode) {
             private final ByteList byteList = RopeOperations.toByteListCopy(StringOperations.rope(string));
             int codeRange = StringOperations.getCodeRange(string).toInt();
 
@@ -97,8 +98,9 @@ public abstract class StringOperations {
         };
     }
 
-    public static StringCodeRangeableWrapper getCodeRangeableReadOnly(final DynamicObject string) {
-        return new StringCodeRangeableWrapper(string) {
+    public static StringCodeRangeableWrapper getCodeRangeableReadOnly(final DynamicObject string,
+                                                                      final EncodingNodes.CheckEncodingNode checkEncodingNode) {
+        return new StringCodeRangeableWrapper(string, checkEncodingNode) {
             @Override
             public ByteList getByteList() {
                 return StringOperations.getByteListReadOnly(string);
@@ -115,8 +117,8 @@ public abstract class StringOperations {
         final int existingCodeRange = StringOperations.getCodeRange(string).toInt();
 
         if (existingCodeRange != codeRange) {
-            CompilerDirectives.transferToInterpreter();
-            throw new RuntimeException(String.format("Tried changing the code range value for a rope from %d to %d", existingCodeRange, codeRange));
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            throw new RuntimeException(StringUtils.format("Tried changing the code range value for a rope from %d to %d", existingCodeRange, codeRange));
         }
     }
 
@@ -134,42 +136,6 @@ public abstract class StringOperations {
         }
     }
 
-    public static void modify(DynamicObject string) {
-        // No-op. Ropes are immutable so any modifications must've been handled elsewhere.
-        // TODO (nirvdrum 07-Jan-16) Remove this method once we've inspected each caller for correctness.
-    }
-
-    public static void modify(DynamicObject string, int length) {
-        // No-op. Ropes are immutable so any modifications must've been handled elsewhere.
-        // TODO (nirvdrum 07-Jan-16) Remove this method once we've inspected each caller for correctness.
-    }
-
-    public static void modifyAndKeepCodeRange(DynamicObject string) {
-        modify(string);
-        keepCodeRange(string);
-    }
-
-    @TruffleBoundary(throwsControlFlowException = true)
-    public static Encoding checkEncoding(DynamicObject string, CodeRangeable other) {
-        final Encoding encoding = EncodingNodes.CompatibleQueryNode.compatibleEncodingForStrings(string, ((StringCodeRangeableWrapper) other).getString());
-
-        // TODO (nirvdrum 23-Mar-15) We need to raise a proper Truffle+JRuby exception here, rather than a non-Truffle JRuby exception.
-        if (encoding == null) {
-            final RubyContext context = Layouts.MODULE.getFields(Layouts.BASIC_OBJECT.getLogicalClass(string)).getContext();
-            throw context.getJRubyRuntime().newEncodingCompatibilityError(
-                    String.format("incompatible character encodings: %s and %s",
-                            Layouts.STRING.getRope(string).getEncoding().toString(),
-                            other.getByteList().getEncoding().toString()));
-        }
-
-        return encoding;
-    }
-
-    public static void forceEncodingVerySlow(DynamicObject string, Encoding encoding) {
-        final Rope oldRope = Layouts.STRING.getRope(string);
-        StringOperations.setRope(string, RopeOperations.withEncodingVerySlow(oldRope, encoding, CodeRange.CR_UNKNOWN));
-    }
-
     public static int normalizeIndex(int length, int index) {
         return ArrayOperations.normalizeIndex(length, index);
     }
@@ -181,20 +147,6 @@ public abstract class StringOperations {
         return ArrayOperations.clampExclusiveIndex(StringOperations.rope(string).byteLength(), index);
     }
 
-    public static Encoding checkEncoding(RubyContext context, DynamicObject string, DynamicObject other, Node node) {
-        final Encoding encoding = EncodingNodes.CompatibleQueryNode.compatibleEncodingForStrings(string, other);
-
-        if (encoding == null) {
-            CompilerDirectives.transferToInterpreter();
-            throw new RaiseException(context.getCoreExceptions().encodingCompatibilityErrorIncompatible(
-                    rope(string).getEncoding().toString(),
-                    rope(other).getEncoding().toString(),
-                    node));
-        }
-
-        return encoding;
-    }
-
     @TruffleBoundary
     public static Rope encodeRope(CharSequence value, Encoding encoding, CodeRange codeRange) {
         // Taken from org.jruby.RubyString#encodeByteList.
@@ -202,27 +154,19 @@ public abstract class StringOperations {
         Charset charset = encoding.getCharset();
 
         // if null charset, fall back on Java default charset
-        if (charset == null) charset = Charset.defaultCharset();
-
-        byte[] bytes;
-        if (charset == RubyEncoding.UTF8) {
-            bytes = RubyEncoding.encodeUTF8(value);
-        } else if (charset == RubyEncoding.UTF16) {
-            bytes = RubyEncoding.encodeUTF16(value);
-        } else {
-            bytes = RubyEncoding.encode(value, charset);
+        if (charset == null) {
+            charset = Charset.defaultCharset();
         }
+
+        final ByteBuffer buffer = charset.encode(CharBuffer.wrap(value));
+        final byte[] bytes = new byte[buffer.limit()];
+        buffer.get(bytes);
 
         return RopeOperations.create(bytes, encoding, codeRange);
     }
 
     public static Rope encodeRope(CharSequence value, Encoding encoding) {
         return encodeRope(value, encoding, CodeRange.CR_UNKNOWN);
-    }
-
-    @TruffleBoundary
-    public static Rope createRope(String s, Encoding encoding) {
-        return RopeOperations.create(ByteList.encode(s, "ISO-8859-1"), encoding, CodeRange.CR_UNKNOWN);
     }
 
     public static ByteList getByteListReadOnly(DynamicObject object) {
@@ -245,7 +189,7 @@ public abstract class StringOperations {
 
     @TruffleBoundary
     public static ByteList createByteList(CharSequence s) {
-        return ByteList.create(s);
+        return ByteListUtils.create(s);
     }
 
     public static Rope rope(DynamicObject string) {

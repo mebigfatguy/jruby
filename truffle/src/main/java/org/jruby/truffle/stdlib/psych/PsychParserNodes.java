@@ -38,19 +38,24 @@
  */
 package org.jruby.truffle.stdlib.psych;
 
-import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.object.DynamicObject;
+import com.oracle.truffle.api.profiles.BranchProfile;
 import com.oracle.truffle.api.source.SourceSection;
 import org.jcodings.Encoding;
+import org.jcodings.Ptr;
+import org.jcodings.specific.ASCIIEncoding;
 import org.jcodings.specific.UTF8Encoding;
+import org.jcodings.transcode.EConv;
+import org.jcodings.transcode.EConvResult;
+import org.jcodings.transcode.TranscoderDB;
 import org.jcodings.unicode.UnicodeEncoding;
 import org.jruby.RubyEncoding;
 import org.jruby.runtime.Helpers;
-import org.jruby.truffle.Layouts;
 import org.jruby.truffle.RubyContext;
 import org.jruby.truffle.builtins.CoreClass;
 import org.jruby.truffle.builtins.CoreMethod;
@@ -64,13 +69,13 @@ import org.jruby.truffle.language.RubyGuards;
 import org.jruby.truffle.language.SnippetNode;
 import org.jruby.truffle.language.dispatch.CallDispatchHeadNode;
 import org.jruby.truffle.language.dispatch.DoesRespondDispatchHeadNode;
-import org.jruby.truffle.language.objects.AllocateObjectNode;
-import org.jruby.truffle.language.objects.AllocateObjectNodeGen;
 import org.jruby.truffle.language.objects.ReadObjectFieldNode;
 import org.jruby.truffle.language.objects.ReadObjectFieldNodeGen;
 import org.jruby.truffle.language.objects.TaintNode;
 import org.jruby.truffle.language.objects.TaintNodeGen;
+import org.jruby.truffle.util.BoundaryUtils.BoundaryIterable;
 import org.jruby.util.ByteList;
+import org.jruby.util.StringSupport;
 import org.jruby.util.io.EncodingUtils;
 import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.error.Mark;
@@ -78,6 +83,7 @@ import org.yaml.snakeyaml.events.AliasEvent;
 import org.yaml.snakeyaml.events.DocumentEndEvent;
 import org.yaml.snakeyaml.events.DocumentStartEvent;
 import org.yaml.snakeyaml.events.Event;
+import org.yaml.snakeyaml.events.Event.ID;
 import org.yaml.snakeyaml.events.MappingStartEvent;
 import org.yaml.snakeyaml.events.ScalarEvent;
 import org.yaml.snakeyaml.events.SequenceStartEvent;
@@ -91,28 +97,12 @@ import org.yaml.snakeyaml.scanner.ScannerException;
 import java.io.ByteArrayInputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
 
 @CoreClass("Psych::Parser")
 public abstract class PsychParserNodes {
-
-    @CoreMethod(names = "allocate", constructor = true)
-    public abstract static class AllocateNode extends CoreMethodArrayArgumentsNode {
-
-        @Child private AllocateObjectNode allocateNode;
-
-        public AllocateNode(RubyContext context, SourceSection sourceSection) {
-            super(context, sourceSection);
-            allocateNode = AllocateObjectNodeGen.create(context, sourceSection, null, null);
-        }
-
-        @Specialization
-        public DynamicObject allocate(DynamicObject rubyClass) {
-            return allocateNode.allocate(rubyClass, null, null);
-        }
-
-    }
 
     @CoreMethod(names = "parse", required = 1, optional = 1)
     public abstract static class ParseNode extends CoreMethodArrayArgumentsNode {
@@ -121,7 +111,7 @@ public abstract class PsychParserNodes {
 
         public ParseNode(RubyContext context, SourceSection sourceSection) {
             super(context, sourceSection);
-            toStrNode = ToStrNodeGen.create(getContext(), getSourceSection(), null);
+            toStrNode = ToStrNodeGen.create(getContext(), null, null);
         }
 
         public abstract Object executeParse(VirtualFrame frame, DynamicObject parserObject, DynamicObject yaml, Object path);
@@ -154,50 +144,36 @@ public abstract class PsychParserNodes {
                 @Cached("createMethodCall()") CallDispatchHeadNode callEndStreamNode,
                 @Cached("new()") SnippetNode raiseSyntaxErrorSnippetNode,
                 @Cached("new()") SnippetNode tagPushNode,
-                @Cached("createTaintNode()") TaintNode taintNode) {
-            CompilerDirectives.bailout("Psych parsing cannot be compiled");
+                @Cached("createTaintNode()") TaintNode taintNode,
+                @Cached("create()") BranchProfile errorProfile) {
 
             final boolean tainted = (boolean) taintedNode.execute(frame, "yaml.tainted? || yaml.is_a?(IO)", "yaml", yaml);
 
             final StreamReader reader;
 
             if (!RubyGuards.isRubyString(yaml) && respondToReadNode.doesRespondTo(frame, "read", yaml)) {
-                final Encoding enc = UTF8Encoding.INSTANCE;
-                final Charset charset = enc.getCharset();
-                reader = new StreamReader(new InputStreamReader(new InputStreamAdapter(getContext(), yaml), charset));
+                reader = newStreamReader(yaml);
             } else {
                 ByteList byteList = StringOperations.getByteListReadOnly(toStrNode.executeToStr(frame, yaml));
-                Encoding encoding = byteList.getEncoding();
-
-                if (!(encoding instanceof UnicodeEncoding)) {
-                    byteList = EncodingUtils.strConvEnc(getContext().getJRubyRuntime().getCurrentContext(),
-                            byteList, encoding, UTF8Encoding.INSTANCE);
-
-                    encoding = UTF8Encoding.INSTANCE;
-                }
-
-                reader = new StreamReader(
-                        new InputStreamReader(
-                                new ByteArrayInputStream(
-                                        byteList.getUnsafeBytes(), byteList.getBegin(), byteList.getRealSize()),
-                                encoding.getCharset()));
+                reader = newStringReader(byteList);
             }
 
-            final Parser parser = new ParserImpl(reader);
+            final Parser parser = newParser(reader);
 
             try {
                 if (isNil(path) && respondToPathNode.doesRespondTo(frame, "path", yaml)) {
-                    path = (DynamicObject) callPathNode.call(frame, yaml, "path", null);
+                    path = (DynamicObject) callPathNode.call(frame, yaml, "path");
                 }
 
                 final Object handler = readHandlerNode.execute(parserObject);
 
                 while (true) {
-                    Event event = parser.getEvent();
+                    Event event = getParserEvent(parser);
 
-                    if (event.is(Event.ID.StreamStart)) {
-                        callStartStreamNode.call(frame, handler, "start_stream", null, YAMLEncoding.YAML_ANY_ENCODING.ordinal());
-                    } else if (event.is(Event.ID.DocumentStart)) {
+                    if (isEvent(event, Event.ID.StreamStart)) {
+                        callStartStreamNode.call(frame, handler, "start_stream", YAMLEncoding.YAML_ANY_ENCODING.ordinal());
+
+                    } else if (isEvent(event, Event.ID.DocumentStart)) {
                         final DocumentStartEvent startEvent = (DocumentStartEvent) event;
 
                         final DumperOptions.Version versionOptions = startEvent.getVersion();
@@ -206,20 +182,20 @@ public abstract class PsychParserNodes {
                         final DynamicObject versionArray;
 
                         if (versionInts == null) {
-                            versionArray = Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), null, 0);
+                            versionArray = createArray(null, 0);
                         } else {
-                            versionArray = Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), new Object[]{
+                            versionArray = createArray(new Object[] {
                                     versionInts[0], versionInts[1]
                             }, 2);
                         }
 
                         Map<String, String> tagsMap = startEvent.getTags();
-                        DynamicObject tags = Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), null, 0);
+                        DynamicObject tags = createArray(null, 0);
 
-                        if (tagsMap != null && tagsMap.size() > 0) {
-                            for (Map.Entry<String, String> tag : tagsMap.entrySet()) {
-                                Object key = stringFor(tag.getKey(), tainted, taintNode);
-                                Object value = stringFor(tag.getValue(), tainted, taintNode);
+                        if (tagsMap != null && size(tagsMap) > 0) {
+                            for (Map.Entry<String, String> tag : BoundaryIterable.wrap(entrySet(tagsMap))) {
+                                Object key = stringFor(getKey(tag), tainted, taintNode);
+                                Object value = stringFor(getValue(tag), tainted, taintNode);
                                 tagPushNode.execute(frame,
                                         "tags.push [key, value]",
                                         "tags", tags,
@@ -229,16 +205,19 @@ public abstract class PsychParserNodes {
                         }
 
                         Object notExplicit = !startEvent.getExplicit();
-                        callStartDocumentNode.call(frame, handler, "start_document", null, versionArray, tags, notExplicit);
-                    } else if (event.is(Event.ID.DocumentEnd)) {
+                        callStartDocumentNode.call(frame, handler, "start_document", versionArray, tags, notExplicit);
+
+                    } else if (isEvent(event, Event.ID.DocumentEnd)) {
                         final DocumentEndEvent endEvent = (DocumentEndEvent) event;
                         Object notExplicit = !endEvent.getExplicit();
-                        callEndDocumentNode.call(frame, handler, "end_document", null, notExplicit);
-                    } else if (event.is(Event.ID.Alias)) {
+                        callEndDocumentNode.call(frame, handler, "end_document", notExplicit);
+
+                    } else if (isEvent(event, Event.ID.Alias)) {
                         final AliasEvent aliasEvent = (AliasEvent) event;
                         Object alias = stringOrNilFor(aliasEvent.getAnchor(), tainted, taintNode);
-                        callAliasNode.call(frame, handler, "alias", null, alias);
-                    } else if (event.is(Event.ID.Scalar)) {
+                        callAliasNode.call(frame, handler, "alias", alias);
+
+                    } else if (isEvent(event, Event.ID.Scalar)) {
                         final ScalarEvent scalarEvent = (ScalarEvent) event;
 
                         Object anchor = stringOrNilFor(scalarEvent.getAnchor(), tainted, taintNode);
@@ -248,9 +227,9 @@ public abstract class PsychParserNodes {
                         Object style = translateStyle(scalarEvent.getStyle());
                         Object val = stringFor(scalarEvent.getValue(), tainted, taintNode);
 
-                        callScalarNode.call(frame, handler, "scalar", null, val, anchor, tag, plain_implicit,
-                                quoted_implicit, style);
-                    } else if (event.is(Event.ID.SequenceStart)) {
+                        callScalarNode.call(frame, handler, "scalar", val, anchor, tag, plain_implicit, quoted_implicit, style);
+
+                    } else if (isEvent(event, Event.ID.SequenceStart)) {
                         final SequenceStartEvent sequenceStartEvent = (SequenceStartEvent) event;
 
                         Object anchor = stringOrNilFor(sequenceStartEvent.getAnchor(), tainted, taintNode);
@@ -258,10 +237,12 @@ public abstract class PsychParserNodes {
                         Object implicit = sequenceStartEvent.getImplicit();
                         Object style = translateFlowStyle(sequenceStartEvent.getFlowStyle());
 
-                        callStartSequenceNode.call(frame, handler, "start_sequence", null, anchor, tag, implicit, style);
-                    } else if (event.is(Event.ID.SequenceEnd)) {
-                        callEndSequenceNode.call(frame, handler, "end_sequence", null);
-                    } else if (event.is(Event.ID.MappingStart)) {
+                        callStartSequenceNode.call(frame, handler, "start_sequence", anchor, tag, implicit, style);
+
+                    } else if (isEvent(event, Event.ID.SequenceEnd)) {
+                        callEndSequenceNode.call(frame, handler, "end_sequence");
+
+                    } else if (isEvent(event, Event.ID.MappingStart)) {
                         final MappingStartEvent mappingStartEvent = (MappingStartEvent) event;
 
                         Object anchor = stringOrNilFor(mappingStartEvent.getAnchor(), tainted, taintNode);
@@ -269,15 +250,18 @@ public abstract class PsychParserNodes {
                         Object implicit = mappingStartEvent.getImplicit();
                         Object style = translateFlowStyle(mappingStartEvent.getFlowStyle());
 
-                        callStartMappingNode.call(frame, handler, "start_mapping", null, anchor, tag, implicit, style);
-                    } else if (event.is(Event.ID.MappingEnd)) {
-                        callEndMappingNode.call(frame, handler, "end_mapping", null);
-                    } else if (event.is(Event.ID.StreamEnd)) {
-                        callEndStreamNode.call(frame, handler, "end_stream", null);
+                        callStartMappingNode.call(frame, handler, "start_mapping", anchor, tag, implicit, style);
+
+                    } else if (isEvent(event, Event.ID.MappingEnd)) {
+                        callEndMappingNode.call(frame, handler, "end_mapping");
+
+                    } else if (isEvent(event, Event.ID.StreamEnd)) {
+                        callEndStreamNode.call(frame, handler, "end_stream");
                         break;
                     }
                 }
-            } catch (ParserException pe) {
+            } catch (ParserException | ScannerException pe) {
+                errorProfile.enter();
                 final Mark mark = pe.getProblemMark();
 
                 raiseSyntaxErrorSnippetNode.execute(frame,
@@ -286,34 +270,94 @@ public abstract class PsychParserNodes {
                         "line", mark.getLine(),
                         "col", mark.getColumn(),
                         "offset", mark.getIndex(),
-                        "problem", pe.getProblem() == null ? nil() : createString(new ByteList(pe.getProblem().getBytes(StandardCharsets.UTF_8))),
-                        "context", pe.getContext() == null ? nil() : createString(new ByteList(pe.getContext().getBytes(StandardCharsets.UTF_8))));
-            } catch (ScannerException se) {
-                final Mark mark = se.getProblemMark();
-
-                raiseSyntaxErrorSnippetNode.execute(frame,
-                        "raise Psych::SyntaxError.new(file, line, col, offset, problem, context)",
-                        "file", path,
-                        "line", mark.getLine(),
-                        "col", mark.getColumn(),
-                        "offset", mark.getIndex(),
-                        "problem", se.getProblem() == null ? nil() : createString(new ByteList(se.getProblem().getBytes(StandardCharsets.UTF_8))),
-                        "context", se.getContext() == null ? nil() : createString(new ByteList(se.getContext().getBytes(StandardCharsets.UTF_8))));
+                        "problem", pe.getProblem() == null ? nil() : createUTF8String(pe.getProblem()),
+                        "context", pe.getContext() == null ? nil() : createUTF8String(pe.getContext()));
             } catch (ReaderException re) {
+                errorProfile.enter();
+
                 raiseSyntaxErrorSnippetNode.execute(frame,
                         "raise Psych::SyntaxError.new(file, line, col, offset, problem, context)",
                         "file", path,
                         "line", 0,
                         "col", 0,
                         "offset", re.getPosition(),
-                        "problem", re.getName() == null ? nil() : createString(new ByteList(re.getName().getBytes(StandardCharsets.UTF_8))),
-                        "context", re.toString() == null ? nil() : createString(new ByteList(re.toString().getBytes(StandardCharsets.UTF_8))));
+                        "problem", re.getName() == null ? nil() : createUTF8String(re.getName()),
+                        "context", toString(re) == null ? nil() : createUTF8String(toString(re)));
             } catch (Throwable t) {
+                errorProfile.enter();
                 Helpers.throwException(t);
                 return parserObject;
             }
 
             return parserObject;
+        }
+
+        @TruffleBoundary
+        private StreamReader newStreamReader(DynamicObject yaml) {
+            final Encoding enc = UTF8Encoding.INSTANCE;
+            final Charset charset = enc.getCharset();
+            return new StreamReader(new InputStreamReader(new InputStreamAdapter(getContext(), yaml), charset));
+        }
+
+        @TruffleBoundary
+        private StreamReader newStringReader(ByteList byteList) {
+            Encoding encoding = byteList.getEncoding();
+
+            if (!(encoding instanceof UnicodeEncoding)) {
+                byteList = strConvEnc(getContext(), byteList, encoding);
+
+                encoding = UTF8Encoding.INSTANCE;
+            }
+
+            return new StreamReader(
+                    new InputStreamReader(
+                            new ByteArrayInputStream(
+                                    byteList.getUnsafeBytes(), byteList.getBegin(), byteList.getRealSize()),
+                            encoding.getCharset()));
+        }
+
+        @TruffleBoundary
+        private ParserImpl newParser(StreamReader reader) {
+            return new ParserImpl(reader);
+        }
+
+        @TruffleBoundary
+        private Event getParserEvent(Parser parser) {
+            return parser.getEvent();
+        }
+
+        @TruffleBoundary
+        private boolean isEvent(Event event, ID id) {
+            return event.is(id);
+        }
+
+        private DynamicObject createUTF8String(String value) {
+            return createString(StringOperations.encodeRope(value, UTF8Encoding.INSTANCE));
+        }
+
+        @TruffleBoundary
+        private int size(Map<String, String> tagsMap) {
+            return tagsMap.size();
+        }
+
+        @TruffleBoundary
+        private Set<Entry<String, String>> entrySet(Map<String, String> tagsMap) {
+            return tagsMap.entrySet();
+        }
+
+        @TruffleBoundary
+        private String getKey(Map.Entry<String, String> tag) {
+            return tag.getKey();
+        }
+
+        @TruffleBoundary
+        private String getValue(Map.Entry<String, String> tag) {
+            return tag.getValue();
+        }
+
+        @TruffleBoundary
+        private String toString(ReaderException re) {
+            return re.toString();
         }
 
         protected ReadObjectFieldNode createReadHandlerNode() {
@@ -360,6 +404,7 @@ public abstract class PsychParserNodes {
             }
         }
 
+        @TruffleBoundary
         private Object stringOrNilFor(String value, boolean tainted, TaintNode taintNode) {
             if (value == null) {
                 return nil();
@@ -368,8 +413,9 @@ public abstract class PsychParserNodes {
             }
         }
 
+        @TruffleBoundary
         private Object stringFor(String value, boolean tainted, TaintNode taintNode) {
-            Encoding encoding = getContext().getJRubyRuntime().getDefaultInternalEncoding();
+            Encoding encoding = getContext().getEncodingManager().getDefaultInternalEncoding();
 
             if (encoding == null) {
                 encoding = UTF8Encoding.INSTANCE;
@@ -388,6 +434,99 @@ public abstract class PsychParserNodes {
             }
 
             return string;
+        }
+
+        private ByteList strConvEnc(RubyContext context, ByteList byteList, Encoding encoding) {
+            return strConvEnc2(context, byteList, encoding, UTF8Encoding.INSTANCE);
+        }
+
+        private static ByteList strConvEnc2(RubyContext context, ByteList value, Encoding fromEncoding, Encoding toEncoding) {
+            return strConvEncOpts(context, value, fromEncoding, toEncoding, 0, null);
+        }
+
+        private static ByteList strConvEncOpts(RubyContext context, ByteList str, Encoding fromEncoding,
+                                                Encoding toEncoding, int ecflags, Object ecopts) {
+            if (toEncoding == null) return str;
+            if (fromEncoding == null) fromEncoding = str.getEncoding();
+            if (fromEncoding == toEncoding) return str;
+            if ((toEncoding.isAsciiCompatible() && isAsciiOnly(str)) ||
+                    toEncoding == ASCIIEncoding.INSTANCE) {
+                if (str.getEncoding() != toEncoding) {
+                    str = str.dup();
+                    str.setEncoding(toEncoding);
+                }
+                return str;
+            }
+
+            ByteList strByteList = str;
+            int len = strByteList.getRealSize();
+            ByteList newStr = new ByteList(len);
+            int olen = len;
+
+            EConv ec = econvOpenOpts(context, fromEncoding.getName(), toEncoding.getName(), ecflags, ecopts);
+            if (ec == null) return str;
+
+            byte[] sbytes = strByteList.getUnsafeBytes();
+            Ptr sp = new Ptr(strByteList.getBegin());
+            int start = sp.p;
+
+            byte[] destbytes;
+            Ptr dp = new Ptr(0);
+            EConvResult ret;
+            int convertedOutput = 0;
+
+            // these are in the while clause in MRI
+            destbytes = newStr.getUnsafeBytes();
+            int dest = newStr.begin();
+            dp.p = dest + convertedOutput;
+            ret = ec.convert(sbytes, sp, start + len, destbytes, dp, dest + olen, 0);
+
+            while (ret == EConvResult.DestinationBufferFull) {
+                int convertedInput = sp.p - start;
+                int rest = len - convertedInput;
+                convertedOutput = dp.p - dest;
+                newStr.setRealSize(convertedOutput);
+                if (convertedInput != 0 && convertedOutput != 0 &&
+                        rest < (Integer.MAX_VALUE / convertedOutput)) {
+                    rest = (rest * convertedOutput) / convertedInput;
+                } else {
+                    rest = olen;
+                }
+                olen += rest < 2 ? 2 : rest;
+                newStr.ensure(olen);
+
+                // these are the while clause in MRI
+                destbytes = newStr.getUnsafeBytes();
+                dest = newStr.begin();
+                dp.p = dest + convertedOutput;
+                ret = ec.convert(sbytes, sp, start + len, destbytes, dp, dest + olen, 0);
+            }
+            ec.close();
+
+            switch (ret) {
+                case Finished:
+                    len = dp.p;
+                    newStr.setRealSize(len);
+                    newStr.setEncoding(toEncoding);
+                    return newStr;
+
+                default:
+                    // some error, return original
+                    return str;
+            }
+        }
+
+        private static EConv econvOpenOpts(RubyContext context, byte[] sourceEncoding, byte[] destinationEncoding, int ecflags, Object opthash) {
+            EConv ec = TranscoderDB.open(sourceEncoding, destinationEncoding, ecflags);
+            return ec;
+        }
+
+        private static boolean isAsciiOnly(ByteList string) {
+            return string.getEncoding().isAsciiCompatible() && scanForCodeRange(string) == StringSupport.CR_7BIT;
+        }
+
+        private static int scanForCodeRange(ByteList string) {
+            return StringSupport.codeRangeScan(EncodingUtils.getActualEncoding(string.getEncoding(), string), string);
         }
 
     }

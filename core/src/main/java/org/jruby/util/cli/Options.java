@@ -51,7 +51,7 @@ import static org.jruby.RubyInstanceConfig.CompileMode;
  * of the built-in structure.
  */
 public class Options {
-    private static final List<Option> _loadedOptions = new ArrayList<Option>();
+    private static final List<Option> _loadedOptions = new ArrayList<>(240);
     private static final boolean INVOKEDYNAMIC_DEFAULT = calculateInvokedynamicDefault();
 
     // This section holds all Options for JRuby. They will be listed in the
@@ -144,7 +144,7 @@ public class Options {
     public static final Option<Boolean> OBJECTSPACE_ENABLED = bool(MISCELLANEOUS, "objectspace.enabled", false, "Enable or disable ObjectSpace.each_object.");
     public static final Option<Boolean> SIPHASH_ENABLED = bool(MISCELLANEOUS, "siphash.enabled", false, "Enable or disable SipHash for String hash function.");
     public static final Option<Boolean> LAUNCH_INPROC = bool(MISCELLANEOUS, "launch.inproc", false, "Set in-process launching of e.g. system('ruby ...').");
-    public static final Option<String> BYTECODE_VERSION = string(MISCELLANEOUS, "bytecode.version", new String[]{"1.6", "1.7", "1.8"}, SafePropertyAccessor.getProperty("java.specification.version", "1.7"), "Specify the major Java bytecode version.");
+    public static final Option<String> BYTECODE_VERSION = string(MISCELLANEOUS, "bytecode.version", new String[]{"1.6", "1.7", "1.8", "1.9"}, SafePropertyAccessor.getProperty("java.specification.version", "1.7"), "Specify the major Java bytecode version.");
     public static final Option<Boolean> MANAGEMENT_ENABLED = bool(MISCELLANEOUS, "management.enabled", false, "Set whether JMX management is enabled.");
     public static final Option<Boolean> JUMP_BACKTRACE = bool(MISCELLANEOUS, "jump.backtrace", false, "Make non-local flow jumps generate backtraces.");
     public static final Option<Boolean> PROCESS_NOUNWRAP = bool(MISCELLANEOUS, "process.noUnwrap", false, "Do not unwrap process streams (issue on some recent JVMs).");
@@ -166,6 +166,10 @@ public class Options {
     public static final Option<Boolean> FCNTL_LOCKING = bool(MISCELLANEOUS, "file.flock.fcntl", true, "Use fcntl rather than flock for File#flock");
     public static final Option<Boolean> VOLATILE_VARIABLES = bool(MISCELLANEOUS, "volatile.variables", true, "Always ensure volatile semantics for instance variables.");
     public static final Option<Boolean> RECORD_LEXICAL_HIERARCHY = bool(MISCELLANEOUS, "record.lexical.hierarchy", false, "Maintain children static scopes to support scope dumping.");
+    public static final Option<String> PREFERRED_PRNG = string(MISCELLANEOUS, "preferred.prng", "NativePRNGNonBlocking", "Set the preferred JDK-supported random number generator to use.");
+    public static final Option<Boolean> USE_FIXNUM_CACHE = bool(MISCELLANEOUS, "fixnum.cache", true, "Use a cache of low-valued Fixnum objects.");
+    public static final Option<Integer> FIXNUM_CACHE_RANGE = integer(MISCELLANEOUS, "fixnum.cache.size", 256, "Values to retrieve from Fixnum cache, in the range -X..(X-1).");
+    public static final Option<Boolean> PACKED_ARRAYS = bool(MISCELLANEOUS, "packed.arrays", true, "Toggle whether to use \"packed\" arrays for small tuples.");
 
     public static final Option<Boolean> DEBUG_LOADSERVICE = bool(DEBUG, "debug.loadService", false, "Log require/load file searches.");
     public static final Option<Boolean> DEBUG_LOADSERVICE_TIMING = bool(DEBUG, "debug.loadService.timing", false, "Log require/load parse+evaluate times.");
@@ -236,9 +240,10 @@ public class Options {
     public static final Option<Boolean> TRUFFLE_PLATFORM_USE_JAVA = bool(TRUFFLE, "truffle.platform.use_java", false, "Use a pure-Java platform, so no native POSIX.");
 
     public static final Option<Boolean> TRUFFLE_COVERAGE_GLOBAL = bool(TRUFFLE, "truffle.coverage.global", false, "Run coverage for all code and print results on exit.");
-    public static final Option<Boolean> TRUFFLE_PROFILER = bool(TRUFFLE, "truffle.profiler", false, "Run the Truffle profiler.");
+    public static final Option<Boolean> TRUFFLE_INLINE_JS = bool(TRUFFLE, "truffle.inline_js", false, "Allow inline JavaScript.");
 
     public static final Option<String> TRUFFLE_CORE_LOAD_PATH = string(TRUFFLE, "truffle.core.load_path", "truffle:/jruby-truffle", "Location to load the Truffle core library from.");
+    public static final Option<Boolean> TRUFFLE_CORE_PARALLEL_LOAD = bool(TRUFFLE, "truffle.core.parallel_load", false, "Load the Truffle core library in parallel.");
 
     public static final Option<Integer> TRUFFLE_ARRAY_UNINITIALIZED_SIZE = integer(TRUFFLE, "truffle.array.uninitialized_size", 32, "How large an Array to allocate when we have no other information to go on.");
     public static final Option<Integer> TRUFFLE_ARRAY_SMALL = integer(TRUFFLE, "truffle.array.small", 3, "Maximum size of an Array to consider small for optimisations.");
@@ -246,6 +251,9 @@ public class Options {
 
     public static final Option<Boolean> TRUFFLE_ROPE_LAZY_SUBSTRINGS = bool(TRUFFLE, "truffle.rope.lazy_substrings", true, "Indicates whether a substring operation on a rope should be performed lazily.");
     public static final Option<Boolean> TRUFFLE_ROPE_PRINT_INTERN_STATS = bool(TRUFFLE, "truffle.rope.print_intern_stats", false, "Print interned rope stats at application exit.");
+
+    public static final Option<Integer> TRUFFLE_GLOBAL_VARIABLE_MAX_INVALIDATIONS = integer(TRUFFLE, "truffle.global_variable.max_invalidations", 10,
+            "Maximum number of times a global variable can be changed to be considered constant.");
 
     public static final Option<Integer> TRUFFLE_DEFAULT_CACHE = integer(TRUFFLE, "truffle.default_cache", 8, "Default size for caches.");
 
@@ -265,6 +273,7 @@ public class Options {
     public static final Option<Integer> TRUFFLE_EVAL_CACHE = integer(TRUFFLE, "truffle.eval.cache", TRUFFLE_DEFAULT_CACHE.load(), "eval cache size.");
     public static final Option<Integer> TRUFFLE_CLASS_CACHE = integer(TRUFFLE, "truffle.class.cache", TRUFFLE_DEFAULT_CACHE.load(), ".class and .metaclass cache size.");
     public static final Option<Integer> TRUFFLE_ENCODING_COMPATIBLE_QUERY_CACHE = integer(TRUFFLE, "truffle.encoding_compatible_query.cache", TRUFFLE_DEFAULT_CACHE.load(), "Encoding.compatible? cache size.");
+    public static final Option<Integer> TRUFFLE_ENCODING_LOADED_CLASSES_CACHE = integer(TRUFFLE, "truffle.encoding_loaded_classes.cache", TRUFFLE_DEFAULT_CACHE.load(), "Cache size of encoding operations based on anticipated number of total active encodings.");
     public static final Option<Integer> TRUFFLE_THREAD_CACHE = integer(TRUFFLE, "truffle.thread.cache", TRUFFLE_DEFAULT_CACHE.load(), "Cache size of operations that depend on a particular thread.");
     public static final Option<Integer> TRUFFLE_ROPE_CLASS_CACHE = integer(TRUFFLE, "truffle.rope_class.cache", 6, "Cache size for rope operations that depend on a concrete rope implementation to avoid virtual calls.");
     public static final Option<Integer> TRUFFLE_INTEROP_CONVERT_CACHE = integer(TRUFFLE, "truffle.interop.convert.cache", TRUFFLE_DEFAULT_CACHE.load(), "Cache size for converting values for interop.");
@@ -293,13 +302,21 @@ public class Options {
     public static final Option<Boolean> TRUFFLE_BACKTRACES_INTERLEAVE_JAVA = bool(TRUFFLE, "truffle.backtraces.interleave_java", false, "Interleave Java stacktraces into the Ruby backtrace.");
     public static final Option<Integer> TRUFFLE_BACKTRACES_LIMIT = integer(TRUFFLE, "truffle.backtraces.limit", 9999, "Limit the size of Ruby backtraces.");
     public static final Option<Boolean> TRUFFLE_BACKTRACES_OMIT_UNUSED = bool(TRUFFLE, "truffle.backtraces.omit_unused", true, "Omit backtraces that should be unused as they have pure rescue expressions.");
+    public static final Option<Boolean> TRUFFLE_BASICOPS_INLINE = bool(TRUFFLE, "truffle.basic_ops.inline", true, "Inline basic operations (like Fixnum operators) in the AST without a call.");
 
     public static final Option<Boolean> TRUFFLE_METRICS_TIME = bool(TRUFFLE, "truffle.metrics.time", false, "Print the time at various stages of VM operation.");
     public static final Option<Boolean> TRUFFLE_METRICS_MEMORY_USED_ON_EXIT = bool(TRUFFLE, "truffle.metrics.memory_used_on_exit", false, "Print the size of heap memory in use on exit.");
     public static final Option<Boolean> TRUFFLE_CALL_GRAPH = bool(TRUFFLE, "truffle.callgraph", false, "Maintain a call graph.");
     public static final Option<String> TRUFFLE_CALL_GRAPH_WRITE = string(TRUFFLE, "truffle.callgraph.write", "File to write the call garph to on exit.");
+    public static final Option<Boolean> TRUFFLE_CHAOS = bool(TRUFFLE, "truffle.chaos", false, "Randomly modify the representation of objects.");
 
     public static final Option<Boolean> TRUFFLE_GRAAL_WARNING_UNLESS = bool(TRUFFLE, "truffle.graal.warn_unless", true, "Warn unless the JVM has the Graal compiler.");
+    public static final Option<Boolean> TRUFFLE_PERF_WARNING = bool(TRUFFLE, "truffle.perf.warn", false, "Warn when using a fature which is not optimized yet.");
+
+    public static final Option<Boolean> TRUFFLE_SHARED_OBJECTS_ENABLED = bool(TRUFFLE, "truffle.shared.objects", true, "Enable shared objects.");
+    public static final Option<Boolean> TRUFFLE_SHARED_OBJECTS_DEBUG = bool(TRUFFLE, "truffle.shared.objects.debug", false, "Print information about shared objects.");
+    public static final Option<Boolean> TRUFFLE_SHARED_OBJECTS_FORCE = bool(TRUFFLE, "truffle.shared.objects.force", false, "Force sharing of objects roots at startup.");
+    public static final Option<Boolean> TRUFFLE_SHARED_OBJECTS_SHARE_ALL = bool(TRUFFLE, "truffle.shared.objects.share_all", false, "Consider all objects as shared.");
 
     public static String dump() {
         return "# JRuby configuration options with current values\n" +
@@ -359,10 +376,7 @@ public class Options {
         return false;
     }
 
-    private static enum SearchMode {
-        PREFIX,
-        CONTAINS
-    }
+    private enum SearchMode { PREFIX,  CONTAINS }
 
     public static void listPrefix(String prefix) {
         list(SearchMode.PREFIX, prefix);
@@ -392,13 +406,15 @@ public class Options {
     }
 
     public static Set<String> getPropertyNames() {
-        final Set<String> propertyNames = new HashSet<String>();
+        final Set<String> propertyNames = new HashSet<>(PROPERTIES.size() + 1, 1);
+        addPropertyNames(propertyNames);
+        return Collections.unmodifiableSet(propertyNames);
+    }
 
+    static void addPropertyNames(final Set<String> propertyNames) {
         for (Option option : PROPERTIES) {
             propertyNames.add(option.propertyName());
         }
-
-        return Collections.unmodifiableSet(propertyNames);
     }
 
     @Deprecated

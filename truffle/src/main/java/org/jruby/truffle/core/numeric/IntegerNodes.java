@@ -92,11 +92,11 @@ public abstract class IntegerNodes {
         @Specialization(guards = "isDynamicObject(from) || isDynamicObject(to)")
         public Object downto(VirtualFrame frame, Object from, Object to, DynamicObject block) {
             if (downtoInternalCall == null) {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 downtoInternalCall = insert(DispatchHeadNodeFactory.createMethodCall(getContext()));
             }
 
-            return downtoInternalCall.call(frame, from, "downto_internal", block, to);
+            return downtoInternalCall.callWithBlock(frame, from, "downto_internal", block, to);
         }
 
     }
@@ -115,7 +115,7 @@ public abstract class IntegerNodes {
                 array[i] = i;
             }
 
-            return Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), array, n);
+            return createArray(array, n);
         }
 
         @Specialization
@@ -247,11 +247,11 @@ public abstract class IntegerNodes {
         @Specialization(guards = "isDynamicObject(from) || isDynamicObject(to)")
         public Object upto(VirtualFrame frame, Object from, Object to, DynamicObject block) {
             if (uptoInternalCall == null) {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 uptoInternalCall = insert(DispatchHeadNodeFactory.createMethodCall(getContext()));
             }
 
-            return uptoInternalCall.call(frame, from, "upto_internal", block, to);
+            return uptoInternalCall.callWithBlock(frame, from, "upto_internal", block, to);
         }
 
     }

@@ -39,6 +39,7 @@ import org.jruby.ir.instructions.specialized.OneFloatArgNoBlockCallInstr;
 import org.jruby.ir.instructions.specialized.OneOperandArgBlockCallInstr;
 import org.jruby.ir.instructions.specialized.OneOperandArgNoBlockCallInstr;
 import org.jruby.ir.instructions.specialized.OneOperandArgNoBlockNoResultCallInstr;
+import org.jruby.ir.instructions.specialized.TwoOperandArgNoBlockCallInstr;
 import org.jruby.ir.instructions.specialized.ZeroOperandArgNoBlockCallInstr;
 import org.jruby.ir.operands.Bignum;
 import org.jruby.ir.operands.Fixnum;
@@ -116,7 +117,7 @@ public class InterpreterEngine {
 
         // Blocks with explicit call protocol shouldn't do this before args are prepared
         if (acceptsKeywordArgument && (block == null || !interpreterContext.hasExplicitCallProtocol())) {
-            IRRuntimeHelpers.frobnicateKwargsArgument(context, args, interpreterContext.getRequiredArgsCount());
+            args = IRRuntimeHelpers.frobnicateKwargsArgument(context, args, interpreterContext.getRequiredArgsCount());
         }
 
         StaticScope currScope = interpreterContext.getStaticScope();
@@ -133,7 +134,7 @@ public class InterpreterEngine {
 
             Operation operation = instr.getOperation();
             if (debug) {
-                Interpreter.LOG.info("I: {" + ipc + "} ", instr);
+                Interpreter.LOG.info("I: {" + ipc + "} " + instr);
                 Interpreter.interpInstrsCount++;
             } else if (profile) {
                 Profiler.instrTick(operation);
@@ -203,7 +204,8 @@ public class InterpreterEngine {
             } catch (Throwable t) {
                 if (debug) extractToMethodToAvoidC2Crash(instr, t);
 
-                ipc = instr.getRPC();
+                // StartupInterpreterEngine never calls this method so we know it is a full build.
+                ipc = ((FullInterpreterContext) interpreterContext).determineRPC(ipc);
 
                 if (debug) {
                     Interpreter.LOG.info("in : " + interpreterContext.getScope() + ", caught Java throwable: " + t + "; excepting instr: " + instr);
@@ -311,6 +313,15 @@ public class InterpreterEngine {
                 IRubyObject r = (IRubyObject)retrieveOp(call.getReceiver(), context, self, currDynScope, currScope, temp);
                 IRubyObject o = (IRubyObject)call.getArg1().retrieve(context, self, currScope, currDynScope, temp);
                 result = call.getCallSite().call(context, self, r, o);
+                setResult(temp, currDynScope, call.getResult(), result);
+                break;
+            }
+            case CALL_2O: {
+                TwoOperandArgNoBlockCallInstr call = (TwoOperandArgNoBlockCallInstr)instr;
+                IRubyObject r = (IRubyObject)retrieveOp(call.getReceiver(), context, self, currDynScope, currScope, temp);
+                IRubyObject o1 = (IRubyObject)call.getArg1().retrieve(context, self, currScope, currDynScope, temp);
+                IRubyObject o2 = (IRubyObject)call.getArg2().retrieve(context, self, currScope, currDynScope, temp);
+                result = call.getCallSite().call(context, self, r, o1, o2);
                 setResult(temp, currDynScope, call.getResult(), result);
                 break;
             }
@@ -556,7 +567,7 @@ public class InterpreterEngine {
             temp[((TemporaryLocalVariable)resultVar).offset] = result;
         } else {
             LocalVariable lv = (LocalVariable)resultVar;
-            currDynScope.setValue((IRubyObject) result, lv.getLocation(), lv.getScopeDepth());
+            currDynScope.setValueVoid((IRubyObject) result, lv.getLocation(), lv.getScopeDepth());
         }
     }
 

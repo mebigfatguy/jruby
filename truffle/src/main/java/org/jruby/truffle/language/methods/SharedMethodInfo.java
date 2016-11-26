@@ -106,25 +106,14 @@ public class SharedMethodInfo {
 
     @Override
     public String toString() {
-        final String prefix;
-
-        if (isBlock) {
-            prefix = "block in ";
-        } else {
-            prefix = "";
-        }
-
         final String suffix;
-
         if (sourceSection == null) {
-            suffix = name;
-        } else if (sourceSection.getSource() == null) {
-            suffix = sourceSection.getIdentifier();
+            return name;
+        } else if (!sourceSection.isAvailable()) {
+            return String.format("%s %s", name, sourceSection.getSource().getName());
         } else {
-            suffix = name + " " + sourceSection.getShortDescription();
+            return String.format("%s %s:%d", name, sourceSection.getSource().getName(), sourceSection.getStartLine());
         }
-
-        return prefix + suffix;
     }
 
 }

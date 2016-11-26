@@ -10,8 +10,6 @@
 package org.jruby.truffle.language.control;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
-import com.oracle.truffle.api.source.SourceSection;
-import org.jruby.truffle.RubyContext;
 import org.jruby.truffle.core.cast.BooleanCastNode;
 import org.jruby.truffle.core.cast.BooleanCastNodeGen;
 import org.jruby.truffle.language.RubyNode;
@@ -20,9 +18,8 @@ public class NotNode extends RubyNode {
 
     @Child private BooleanCastNode child;
 
-    public NotNode(RubyContext context, SourceSection sourceSection, RubyNode child) {
-        super(context, sourceSection);
-        this.child = BooleanCastNodeGen.create(context, sourceSection, child);
+    public NotNode(RubyNode child) {
+        this.child = BooleanCastNodeGen.create(child);
     }
 
     @Override

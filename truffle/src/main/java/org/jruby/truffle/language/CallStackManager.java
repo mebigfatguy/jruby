@@ -15,6 +15,7 @@ import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.frame.FrameInstance;
 import com.oracle.truffle.api.frame.FrameInstanceVisitor;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.object.DynamicObject;
 import com.oracle.truffle.api.source.SourceSection;
 import org.jruby.truffle.Layouts;
@@ -27,6 +28,7 @@ import org.jruby.truffle.language.backtrace.BacktraceFormatter;
 import org.jruby.truffle.language.backtrace.InternalRootNode;
 import org.jruby.truffle.language.exceptions.DisablingBacktracesNode;
 import org.jruby.truffle.language.methods.InternalMethod;
+import org.jruby.truffle.language.methods.SharedMethodInfo;
 import org.jruby.util.Memo;
 
 import java.util.ArrayList;
@@ -39,22 +41,37 @@ public class CallStackManager {
         this.context = context;
     }
 
+    private static final Object STOP_ITERATING = new Object();
+
     @TruffleBoundary
     public FrameInstance getCallerFrameIgnoringSend() {
-        final Memo<Boolean> firstFrame = new Memo<>(true);
+        FrameInstance callerFrame = Truffle.getRuntime().getCallerFrame();
+        if (callerFrame == null) {
+            return null;
+        }
+        InternalMethod method = getMethod(callerFrame);
 
-        final FrameInstance fi = Truffle.getRuntime().iterateFrames(new FrameInstanceVisitor<FrameInstance>() {
+        if (method == null) { // Not a Ruby frame
+            return null;
+        } else if (!context.getCoreLibrary().isSend(method)) {
+            return callerFrame;
+        }
+
+        // Need to iterate further
+        final Object frame = Truffle.getRuntime().iterateFrames(new FrameInstanceVisitor<Object>() {
+            int depth = 0;
+
             @Override
-            public FrameInstance visitFrame(FrameInstance frameInstance) {
-                if (firstFrame.get()) {
-                    firstFrame.set(false);
+            public Object visitFrame(FrameInstance frameInstance) {
+                depth++;
+                if (depth < 2) {
                     return null;
                 }
 
-                final InternalMethod method = getMethod(frameInstance);
-                assert method != null;
-
-                if (!context.getCoreLibrary().isSend(method)) {
+                InternalMethod method = getMethod(frameInstance);
+                if (method == null) {
+                    return STOP_ITERATING;
+                } else if (!context.getCoreLibrary().isSend(method)) {
                     return frameInstance;
                 } else {
                     return null;
@@ -62,7 +79,11 @@ public class CallStackManager {
             }
         });
 
-        return fi;
+        if (frame instanceof FrameInstance) {
+            return (FrameInstance) frame;
+        } else {
+            return null;
+        }
     }
 
     @TruffleBoundary
@@ -74,29 +95,24 @@ public class CallStackManager {
     public Node getTopMostUserCallNode() {
         final Memo<Boolean> firstFrame = new Memo<>(true);
 
-        return Truffle.getRuntime().iterateFrames(new FrameInstanceVisitor<Node>() {
-
-            @Override
-            public Node visitFrame(FrameInstance frameInstance) {
-                if (firstFrame.get()) {
-                    firstFrame.set(false);
-                    return null;
-                }
-
-                final SourceSection sourceSection = frameInstance.getCallNode().getEncapsulatingSourceSection();
-
-                if (sourceSection.getSource() == null) {
-                    return null;
-                } else {
-                    return frameInstance.getCallNode();
-                }
+        return Truffle.getRuntime().iterateFrames(frameInstance -> {
+            if (firstFrame.get()) {
+                firstFrame.set(false);
+                return null;
             }
 
+            final SourceSection sourceSection = frameInstance.getCallNode().getEncapsulatingSourceSection();
+
+            if (sourceSection.getSource() == null) {
+                return null;
+            } else {
+                return frameInstance.getCallNode();
+            }
         });
     }
 
     private InternalMethod getMethod(FrameInstance frame) {
-        return RubyArguments.getMethod(frame.getFrame(FrameInstance.FrameAccess.READ_ONLY, true));
+        return RubyArguments.tryGetMethod(frame.getFrame(FrameInstance.FrameAccess.READ_ONLY, true));
     }
 
     public Backtrace getBacktrace(Node currentNode, Throwable javaThrowable) {
@@ -207,15 +223,17 @@ public class CallStackManager {
             return false;
         }
 
-        // Ignore the call to run_jruby_root
-        // TODO CS 2-Feb-16 should find a better way to detect this than a string
-        final SourceSection sourceSection = callNode.getEncapsulatingSourceSection();
+        final RootNode rootNode = callNode.getRootNode();
 
-        if (sourceSection != null && sourceSection.getShortDescription().endsWith("#run_jruby_root")) {
-            return true;
+        // Ignore the call to Truffle::Boot.main
+        if (rootNode instanceof RubyRootNode) {
+            SharedMethodInfo sharedMethodInfo = ((RubyRootNode) rootNode).getSharedMethodInfo();
+            if (context.getCoreLibrary().isTruffleBootMainMethod(sharedMethodInfo)) {
+                return true;
+            }
         }
 
-        if (callNode.getRootNode() instanceof InternalRootNode) {
+        if (rootNode instanceof InternalRootNode) {
             return true;
         }
 
@@ -239,7 +257,7 @@ public class CallStackManager {
     private Node getCallNode(FrameInstance frameInstance, final InternalMethod method) {
         Node callNode = frameInstance.getCallNode();
         if (callNode == null && method != null &&
-                BacktraceFormatter.isCore(method.getSharedMethodInfo().getSourceSection())) {
+                BacktraceFormatter.isCore(context, method.getSharedMethodInfo().getSourceSection())) {
             callNode = ((RootCallTarget) method.getCallTarget()).getRootNode();
         }
         return callNode;

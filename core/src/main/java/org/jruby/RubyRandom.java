@@ -566,7 +566,7 @@ public class RubyRandom extends RubyObject {
 
     private static IRubyObject checkMaxInt(ThreadContext context, IRubyObject vmax) {
         if (!(vmax instanceof RubyFloat)) {
-            IRubyObject v = TypeConverter.checkIntegerType(context.runtime, vmax, "to_int");
+            IRubyObject v = TypeConverter.checkIntegerType(context, vmax);
             if (!v.isNil()) {
                 return v;
             }
@@ -629,6 +629,7 @@ public class RubyRandom extends RubyObject {
     }
 
     // c: random_equal
+    @Deprecated
     @Override
     @JRubyMethod(name = "==", required = 1)
     public IRubyObject op_equal_19(ThreadContext context, IRubyObject obj) {
@@ -667,7 +668,7 @@ public class RubyRandom extends RubyObject {
     public IRubyObject marshal_dump(ThreadContext context) {
         RubyBignum state = random.getState();
         RubyInteger left = (RubyInteger) RubyNumeric.int2fix(context.runtime, random.getLeft());
-        RubyArray dump = context.runtime.newArray(state, left, random.getSeed());
+        RubyArray dump = RubyArray.newArray(context.runtime, state, left, random.getSeed());
         if (hasVariables()) {
             dump.syncVariables(this);
         }

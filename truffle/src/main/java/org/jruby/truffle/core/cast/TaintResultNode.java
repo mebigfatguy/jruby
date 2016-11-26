@@ -36,7 +36,6 @@ public class TaintResultNode extends RubyNode {
     @Child private TaintNode taintNode;
 
     public TaintResultNode(boolean taintFromSelf, int taintFromParameter, RubyNode method) {
-        super(method.getContext(), method.getEncapsulatingSourceSection());
         this.taintFromSelf = taintFromSelf;
         this.taintFromParameter = taintFromParameter;
         this.method = method;
@@ -50,10 +49,10 @@ public class TaintResultNode extends RubyNode {
         this.isTaintedNode = IsTaintedNodeGen.create(null, null, null);
     }
 
-    public Object maybeTaint(DynamicObject source, DynamicObject result) {
+    public Object maybeTaint(Object source, Object result) {
         if (taintProfile.profile(isTaintedNode.executeIsTainted(source))) {
             if (taintNode == null) {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 taintNode = insert(TaintNodeGen.create(null, null, null));
             }
 
@@ -80,15 +79,17 @@ public class TaintResultNode extends RubyNode {
                 maybeTaint((DynamicObject) RubyArguments.getSelf(frame), result);
             }
 
-            // It's possible the taintFromParameter value was misconfigured by the user, but the far more likely
-            // scenario is that the argument at that position is a NotProvided argument, which doesn't take up
-            // a space in the frame.
-            if (taintFromParameter < RubyArguments.getArgumentsCount(frame)) {
-                final Object argument = RubyArguments.getArgument(frame, taintFromParameter);
+            if (taintFromParameter != -1) {
+                // It's possible the taintFromParameter value was misconfigured by the user, but the far more likely
+                // scenario is that the argument at that position is a NotProvided argument, which doesn't take up
+                // a space in the frame.
+                if (taintFromParameter < RubyArguments.getArgumentsCount(frame)) {
+                    final Object argument = RubyArguments.getArgument(frame, taintFromParameter);
 
-                if (argument instanceof DynamicObject) {
-                    final DynamicObject taintSource = (DynamicObject) argument;
-                    maybeTaint(taintSource, result);
+                    if (argument instanceof DynamicObject) {
+                        final DynamicObject taintSource = (DynamicObject) argument;
+                        maybeTaint(taintSource, result);
+                    }
                 }
             }
         }

@@ -53,12 +53,14 @@ import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.Visibility;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.ByteList;
+import org.jruby.util.io.BadDescriptorException;
 import org.jruby.util.io.ModeFlags;
 import org.jruby.util.io.OpenFile;
 import org.jruby.util.io.FilenoUtil;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.nio.channels.Channel;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -109,20 +111,17 @@ public class RubyUNIXSocket extends RubyBasicSocket {
 
     @JRubyMethod
     public IRubyObject addr(ThreadContext context) {
-        Ruby runtime = context.runtime;
+        final Ruby runtime = context.runtime;
 
-        return runtime.newArray(
-                runtime.newString("AF_UNIX"),
-                RubyString.newEmptyString(runtime));
+        return runtime.newArray( runtime.newString("AF_UNIX"),  RubyString.newEmptyString(runtime) );
     }
 
     @JRubyMethod
     public IRubyObject peeraddr(ThreadContext context) {
-        Ruby runtime = context.runtime;
-
-        return runtime.newArray(
-                runtime.newString("AF_UNIX"),
-                runtime.newString(openFile.getPath()));
+        final Ruby runtime = context.runtime;
+        final String _path = getUnixRemoteSocket().path();
+        final RubyString path = (_path == null) ? RubyString.newEmptyString(runtime) : runtime.newString(_path);
+        return runtime.newArray( runtime.newString("AF_UNIX"), path );
     }
 
     @JRubyMethod(name = "recvfrom", required = 1, optional = 1)
@@ -292,8 +291,8 @@ public class RubyUNIXSocket extends RubyBasicSocket {
 
     @Override
     public IRubyObject setsockopt(ThreadContext context, IRubyObject _level, IRubyObject _opt, IRubyObject val) {
-        SocketLevel level = levelFromArg(_level);
-        SocketOption opt = optionFromArg(_opt);
+        SocketLevel level = SocketUtils.levelFromArg(_level);
+        SocketOption opt = SocketUtils.optionFromArg(_opt);
 
         switch(level) {
             case SOL_SOCKET:

@@ -11,8 +11,8 @@ package org.jruby.truffle.core;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.dsl.Cached;
+import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.Specialization;
-import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.object.DynamicObject;
 import com.oracle.truffle.api.profiles.ConditionProfile;
 import com.oracle.truffle.api.source.SourceSection;
@@ -23,6 +23,10 @@ import org.jruby.truffle.builtins.PrimitiveArrayArgumentsNode;
 import org.jruby.truffle.language.objects.IsTaintedNode;
 import org.jruby.truffle.language.objects.IsTaintedNodeGen;
 import org.jruby.truffle.language.objects.ObjectIDOperations;
+import org.jruby.truffle.language.objects.ObjectIVarGetNode;
+import org.jruby.truffle.language.objects.ObjectIVarGetNodeGen;
+import org.jruby.truffle.language.objects.ObjectIVarSetNode;
+import org.jruby.truffle.language.objects.ObjectIVarSetNodeGen;
 import org.jruby.truffle.language.objects.ReadObjectFieldNode;
 import org.jruby.truffle.language.objects.ReadObjectFieldNodeGen;
 import org.jruby.truffle.language.objects.TaintNode;
@@ -38,10 +42,10 @@ public abstract class ObjectNodes {
     @Primitive(name = "object_id")
     public abstract static class ObjectIDPrimitiveNode extends PrimitiveArrayArgumentsNode {
 
-        public abstract Object executeObjectID(VirtualFrame frame, Object value);
+        public abstract Object executeObjectID(Object value);
 
         @Specialization(guards = "isNil(nil)")
-        public long objectID(Object nil) {
+        public long objectIDNil(Object nil) {
             return ObjectIDOperations.NIL;
         }
 
@@ -95,6 +99,11 @@ public abstract class ObjectNodes {
             return id;
         }
 
+        @Fallback
+        public long objectID(Object object) {
+            return Integer.toUnsignedLong(object.hashCode());
+        }
+
         protected ReadObjectFieldNode createReadObjectIDNode() {
             return ReadObjectFieldNodeGen.create(Layouts.OBJECT_ID_IDENTIFIER, 0L);
         }
@@ -118,22 +127,52 @@ public abstract class ObjectNodes {
         @Specialization
         public Object objectInfect(Object host, Object source) {
             if (isTaintedNode == null) {
-                CompilerDirectives.transferToInterpreter();
-                isTaintedNode = insert(IsTaintedNodeGen.create(getContext(), getSourceSection(), null));
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                isTaintedNode = insert(IsTaintedNodeGen.create(getContext(), null, null));
             }
 
             if (isTaintedNode.executeIsTainted(source)) {
                 // This lazy node allocation effectively gives us a branch profile
 
                 if (taintNode == null) {
-                    CompilerDirectives.transferToInterpreter();
-                    taintNode = insert(TaintNodeGen.create(getContext(), getSourceSection(), null));
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
+                    taintNode = insert(TaintNodeGen.create(getContext(), null, null));
                 }
 
                 taintNode.executeTaint(host);
             }
 
             return host;
+        }
+
+    }
+
+    @Primitive(name = "object_ivar_get")
+    public abstract static class ObjectIVarGetPrimitiveNode extends PrimitiveArrayArgumentsNode {
+
+        @Specialization
+        public Object ivarGet(DynamicObject object, DynamicObject name,
+                @Cached("createObjectIVarGetNode()") ObjectIVarGetNode iVarGetNode) {
+            return iVarGetNode.executeIVarGet(object, Layouts.SYMBOL.getString(name));
+        }
+
+        protected ObjectIVarGetNode createObjectIVarGetNode() {
+            return ObjectIVarGetNodeGen.create(false, null, null);
+        }
+
+    }
+
+    @Primitive(name = "object_ivar_set")
+    public abstract static class ObjectIVarSetPrimitiveNode extends PrimitiveArrayArgumentsNode {
+
+        @Specialization
+        public Object ivarSet(DynamicObject object, DynamicObject name, Object value,
+                @Cached("createObjectIVarSetNode()") ObjectIVarSetNode iVarSetNode) {
+            return iVarSetNode.executeIVarSet(object, Layouts.SYMBOL.getString(name), value);
+        }
+
+        protected ObjectIVarSetNode createObjectIVarSetNode() {
+            return ObjectIVarSetNodeGen.create(false, null, null, null);
         }
 
     }

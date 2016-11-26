@@ -33,9 +33,6 @@ class Symbol
     to_s <=> other.to_s
   end
 
-  # Use equal? for == (and not Comparable version)
-  alias_method :==, :equal?
-
   def capitalize
     to_s.capitalize.to_sym
   end
@@ -86,8 +83,8 @@ class Symbol
     case pattern
     when Regexp
       match_data = pattern.search_region(str, 0, str.bytesize, true)
-      Regexp.last_match = match_data
-      return match_data.full[0] if match_data
+      Truffle.invoke_primitive(:regexp_set_last_match, match_data)
+      return match_data.byte_begin(0) if match_data
     when String
       raise TypeError, "type mismatch: String given"
     else
@@ -115,13 +112,13 @@ class Symbol
     if index.kind_of?(Regexp)
       unless undefined.equal?(other)
         match, str = to_s.send(:subpattern, index, other)
-        Regexp.last_match = match
+        Truffle.invoke_primitive(:regexp_set_last_match, match)
         return str
       end
 
       str = to_s
-      match_data = index.search_region(str, 0, str.num_bytes, true)
-      Regexp.last_match = match_data
+      match_data = index.search_region(str, 0, str.bytesize, true)
+      Truffle.invoke_primitive(:regexp_set_last_match, match_data)
       if match_data
         result = match_data.to_s
         Rubinius::Type.infect result, index
@@ -134,30 +131,6 @@ class Symbol
 
   alias_method :slice, :[]
 
-  # Returns a Proc object which respond to the given method by sym.
-  def to_proc
-    # Put sym in the outer enclosure so that this proc can be instance_eval'd.
-    # If we used self in the block and the block is passed to instance_eval, then
-    # self becomes the object instance_eval was called on. So to get around this,
-    # we leave the symbol in sym and use it in the block.
-    #
-    sym = self
-    Proc.new do |*args, &b|
-      raise ArgumentError, "no receiver given" if args.empty?
-      args.shift.__send__(sym, *args, &b)
-    end
-  end
-
   # Use equal? for ===
   alias_method :===, :equal?
-
-  def self.all_symbols
-    Truffle.primitive :symbol_all_symbols
-    raise PrimitiveFailure, "Symbol.all_symbols primitive failed."
-  end
-
-  def is_constant?
-    Truffle.primitive :symbol_is_constant
-    raise PrimitiveFailure, "Symbol#is_constant primitive failed."
-  end
 end

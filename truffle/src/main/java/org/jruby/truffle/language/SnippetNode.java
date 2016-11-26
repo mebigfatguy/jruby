@@ -20,10 +20,9 @@ import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.source.Source;
 import org.jcodings.specific.UTF8Encoding;
-import org.jruby.truffle.core.string.StringOperations;
 import org.jruby.truffle.language.arguments.RubyArguments;
 import org.jruby.truffle.language.methods.DeclarationContext;
-import org.jruby.truffle.language.parser.ParserContext;
+import org.jruby.truffle.parser.ParserContext;
 
 public class SnippetNode extends RubyBaseNode {
 
@@ -39,7 +38,7 @@ public class SnippetNode extends RubyBaseNode {
 
     public Object execute(VirtualFrame frame, String expression, Object... arguments) {
         if (directCallNode == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
 
             this.expression = expression;
             assert arguments.length % 2 == 0;
@@ -55,9 +54,7 @@ public class SnippetNode extends RubyBaseNode {
                 parameterFrameSlots[n] = frameDescriptor.findOrAddFrameSlot(parameters[n]);
             }
 
-            final Source source = Source.fromText(
-                    StringOperations.createByteList(this.expression),
-                    "(snippet)");
+            final Source source = getContext().getSourceLoader().loadFragment(this.expression, "(snippet)");
 
             final RubyRootNode rootNode = getContext().getCodeLoader().parse(
                     source,
@@ -77,7 +74,7 @@ public class SnippetNode extends RubyBaseNode {
         }
 
         if (arguments.length != parameters.length * 2) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             throw new UnsupportedOperationException(
                     "number of arguments doesn't match number of parameters");
         }

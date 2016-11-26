@@ -48,8 +48,8 @@ import static org.jruby.util.CodegenUtils.sig;
 
 public class Bootstrap {
     public final static String BOOTSTRAP_BARE_SIG = sig(CallSite.class, Lookup.class, String.class, MethodType.class);
-    public final static String BOOTSTRAP_LONG_STRING_INT_SIG = sig(CallSite.class, Lookup.class, String.class, MethodType.class, long.class, String.class, int.class);
-    public final static String BOOTSTRAP_DOUBLE_STRING_INT_SIG = sig(CallSite.class, Lookup.class, String.class, MethodType.class, double.class, String.class, int.class);
+    public final static String BOOTSTRAP_LONG_STRING_INT_SIG = sig(CallSite.class, Lookup.class, String.class, MethodType.class, long.class, int.class, String.class, int.class);
+    public final static String BOOTSTRAP_DOUBLE_STRING_INT_SIG = sig(CallSite.class, Lookup.class, String.class, MethodType.class, double.class, int.class, String.class, int.class);
     public static final Class[] REIFIED_OBJECT_CLASSES = {
         RubyObjectVar0.class,
         RubyObjectVar1.class,
@@ -211,7 +211,7 @@ public class Bootstrap {
     }
 
     public static IRubyObject array(ThreadContext context, IRubyObject[] elts) {
-        return RubyArray.newArrayNoCopy(context.runtime, elts);
+        return RubyArray.newArrayMayCopy(context.runtime, elts);
     }
 
     public static Handle contextValue() {
@@ -362,7 +362,7 @@ public class Bootstrap {
     }
 
     static MethodHandle buildAttrHandle(InvokeSite site, DynamicMethod method, IRubyObject self, RubyClass dispatchClass) {
-        if (method instanceof AttrReaderMethod) {
+        if (method instanceof AttrReaderMethod && site.arity == 0) {
             AttrReaderMethod attrReader = (AttrReaderMethod) method;
             String varName = attrReader.getVariableName();
 
@@ -371,15 +371,15 @@ public class Bootstrap {
 
             // Ruby to attr reader
             if (Options.INVOKEDYNAMIC_LOG_BINDING.load()) {
-                //            if (accessor instanceof FieldVariableAccessor) {
-                //                LOG.info(site.name() + "\tbound as field attr reader " + logMethod(method) + ":" + ((AttrReaderMethod)method).getVariableName());
-                //            } else {
-                //                LOG.info(site.name() + "\tbound as attr reader " + logMethod(method) + ":" + ((AttrReaderMethod)method).getVariableName());
-                //            }
+                if (accessor instanceof FieldVariableAccessor) {
+                    LOG.info(site.name() + "\tbound as field attr reader " + logMethod(method) + ":" + ((AttrReaderMethod)method).getVariableName());
+                } else {
+                    LOG.info(site.name() + "\tbound as attr reader " + logMethod(method) + ":" + ((AttrReaderMethod)method).getVariableName());
+                }
             }
 
             return createAttrReaderHandle(site, self, dispatchClass.getRealClass(), accessor);
-        } else if (method instanceof AttrWriterMethod) {
+        } else if (method instanceof AttrWriterMethod && site.arity == 1) {
             AttrWriterMethod attrReader = (AttrWriterMethod)method;
             String varName = attrReader.getVariableName();
 
@@ -387,13 +387,13 @@ public class Bootstrap {
             VariableAccessor accessor = dispatchClass.getRealClass().getVariableAccessorForWrite(varName);
 
             // Ruby to attr reader
-//            if (Options.INVOKEDYNAMIC_LOG_BINDING.load()) {
-//                if (accessor instanceof FieldVariableAccessor) {
-//                    LOG.info(site.name() + "\tbound as field attr writer " + logMethod(method) + ":" + ((AttrWriterMethod) method).getVariableName());
-//                } else {
-//                    LOG.info(site.name() + "\tbound as attr writer " + logMethod(method) + ":" + ((AttrWriterMethod) method).getVariableName());
-//                }
-//            }
+            if (Options.INVOKEDYNAMIC_LOG_BINDING.load()) {
+                if (accessor instanceof FieldVariableAccessor) {
+                    LOG.info(site.name() + "\tbound as field attr writer " + logMethod(method) + ":" + ((AttrWriterMethod) method).getVariableName());
+                } else {
+                    LOG.info(site.name() + "\tbound as attr writer " + logMethod(method) + ":" + ((AttrWriterMethod) method).getVariableName());
+                }
+            }
 
             return createAttrWriterHandle(site, self, dispatchClass.getRealClass(), accessor);
         }
@@ -816,7 +816,7 @@ public class Bootstrap {
         return value;
     }
 
-    public static boolean testArg0ModuleMatch(IRubyObject arg0, int id) {
+    public static boolean testModuleMatch(ThreadContext context, IRubyObject arg0, int id) {
         return arg0 instanceof RubyModule && ((RubyModule)arg0).id == id;
     }
 
@@ -961,6 +961,10 @@ public class Bootstrap {
                 .invoke(CONSTRUCT_BLOCK);
 
         return new ConstantCallSite(blockMaker);
+    }
+
+    private static String logMethod(DynamicMethod method) {
+        return "[#" + method.getSerialNumber() + " " + method.getImplementationClass() + "]";
     }
 
     private static final Binder BINDING_MAKER_BINDER = Binder.from(Binding.class, ThreadContext.class, IRubyObject.class, DynamicScope.class);

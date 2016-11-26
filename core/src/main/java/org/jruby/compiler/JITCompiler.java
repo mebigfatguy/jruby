@@ -42,6 +42,7 @@ import org.jruby.ir.interpreter.InterpreterContext;
 import org.jruby.ir.targets.JVMVisitor;
 import org.jruby.ir.targets.JVMVisitorMethodContext;
 import org.jruby.runtime.CompiledIRBlockBody;
+import org.jruby.runtime.MethodIndex;
 import org.jruby.runtime.MixedModeIRBlockBody;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
@@ -61,7 +62,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.Locale;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
@@ -143,6 +143,18 @@ public class JITCompiler implements JITCompilerMBean {
         return counts.largestCodeSize.get();
     }
 
+    public String[] getFrameAwareMethods() {
+        String[] frameAwareMethods = MethodIndex.FRAME_AWARE_METHODS.toArray(new String[0]);
+        Arrays.sort(frameAwareMethods);
+        return frameAwareMethods;
+    }
+
+    public String[] getScopeAwareMethods() {
+        String[] scopeAwareMethods = MethodIndex.SCOPE_AWARE_METHODS.toArray(new String[0]);
+        Arrays.sort(scopeAwareMethods);
+        return scopeAwareMethods;
+    }
+
     public void tearDown() {
         try {
             executor.shutdown();
@@ -169,18 +181,22 @@ public class JITCompiler implements JITCompilerMBean {
 
         Runnable jitTask = getTaskFor(context, method);
 
-        if (config.getJitBackground() && config.getJitThreshold() > 0) {
-            try {
-                executor.submit(jitTask);
-            } catch (RejectedExecutionException ree) {
-                // failed to submit, just run it directly
+        try {
+            if (config.getJitBackground() && config.getJitThreshold() > 0) {
+                try {
+                    executor.submit(jitTask);
+                } catch (RejectedExecutionException ree) {
+                    // failed to submit, just run it directly
+                    jitTask.run();
+                }
+            } else {
+                // Because are non-asynchonously build if the JIT threshold happens to be 0 we will have no ic yet.
+                method.ensureInstrsReady();
+                // just run directly
                 jitTask.run();
             }
-        } else {
-            // Because are non-asynchonously build if the JIT threshold happens to be 0 we will have no ic yet.
-            method.ensureInstrsReady();
-            // just run directly
-            jitTask.run();
+        } catch (Exception e) {
+            throw new NotCompilableException(e);
         }
     }
 
@@ -405,10 +421,14 @@ public class JITCompiler implements JITCompilerMBean {
         }
     }
 
+    private static boolean java7InvokeDynamic() {
+        return RubyInstanceConfig.JAVA_VERSION == Opcodes.V1_7 || Options.COMPILE_INVOKEDYNAMIC.load() == true;
+    }
+
     public static class MethodJITClassGenerator {
         public MethodJITClassGenerator(String className, String methodName, String key, Ruby ruby, MixedModeIRMethod method, JVMVisitor visitor) {
             this.packageName = JITCompiler.RUBY_JIT_PREFIX;
-            if (RubyInstanceConfig.JAVA_VERSION == Opcodes.V1_7 || Options.COMPILE_INVOKEDYNAMIC.load() == true) {
+            if ( java7InvokeDynamic() ) {
                 // Some versions of Java 7 seems to have a bug that leaks definitions across cousin classloaders
                 // so we force the class name to be unique to this runtime.
 
@@ -503,7 +523,7 @@ public class JITCompiler implements JITCompilerMBean {
     public static class BlockJITClassGenerator {
         public BlockJITClassGenerator(String className, String methodName, String key, Ruby ruby, MixedModeIRBlockBody body, JVMVisitor visitor) {
             this.packageName = JITCompiler.RUBY_JIT_PREFIX;
-            if (RubyInstanceConfig.JAVA_VERSION == Opcodes.V1_7 || Options.COMPILE_INVOKEDYNAMIC.load() == true) {
+            if ( java7InvokeDynamic() ) {
                 // Some versions of Java 7 seems to have a bug that leaks definitions across cousin classloaders
                 // so we force the class name to be unique to this runtime.
 

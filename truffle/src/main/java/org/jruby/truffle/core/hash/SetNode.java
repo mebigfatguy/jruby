@@ -66,10 +66,8 @@ public abstract class SetNode extends RubyNode {
 
     @Specialization(guards = { "isNullHash(hash)", "!isRubyString(key)" })
     public Object setNull(VirtualFrame frame, DynamicObject hash, Object key, Object value, boolean byIdentity) {
-        int hashed = 0;
-        if (!byIdentityProfile.profile(byIdentity)) {
-            hashed = hashNode.hash(frame, key);
-        }
+        boolean profiledByIdentity = byIdentityProfile.profile(byIdentity);
+        final int hashed = hashNode.hash(frame, key, profiledByIdentity);
 
         Object store = PackedArrayStrategy.createStore(getContext(), hashed, key, value);
         assert HashOperations.verifyStore(getContext(), store, 1, null, null);
@@ -99,10 +97,7 @@ public abstract class SetNode extends RubyNode {
 
         boolean profiledByIdentity = byIdentityProfile.profile(byIdentity);
 
-        int hashed = 0;
-        if (!profiledByIdentity) {
-            hashed = hashNode.hash(frame, key);
-        }
+        int hashed = hashNode.hash(frame, key, profiledByIdentity);
 
         final Object[] store = (Object[]) Layouts.HASH.getStore(hash);
         final int size = Layouts.HASH.getSize(hash);
@@ -111,7 +106,7 @@ public abstract class SetNode extends RubyNode {
             if (n < size) {
                 final boolean equal;
                 if (profiledByIdentity) {
-                    equal = equalNode.executeReferenceEqual(frame, key, PackedArrayStrategy.getKey(store, n));
+                    equal = equalNode.executeReferenceEqual(key, PackedArrayStrategy.getKey(store, n));
                 } else {
                     equal = hashed == PackedArrayStrategy.getHashed(store, n) &&
                             eqlNode.callBoolean(frame, key, "eql?", null, PackedArrayStrategy.getKey(store, n));
@@ -206,8 +201,8 @@ public abstract class SetNode extends RubyNode {
 
     private HashLookupResult lookup(VirtualFrame frame, DynamicObject hash, Object key) {
         if (lookupEntryNode == null) {
-            CompilerDirectives.transferToInterpreter();
-            lookupEntryNode = insert(new LookupEntryNode(getContext(), getEncapsulatingSourceSection()));
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            lookupEntryNode = insert(new LookupEntryNode(getContext(), null));
         }
         return lookupEntryNode.lookup(frame, hash, key);
     }
@@ -232,26 +227,26 @@ public abstract class SetNode extends RubyNode {
 
     private boolean isFrozen(Object value) {
         if (isFrozenNode == null) {
-            CompilerDirectives.transferToInterpreter();
-            isFrozenNode = insert(IsFrozenNodeGen.create(getContext(), getSourceSection(), null));
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            isFrozenNode = insert(IsFrozenNodeGen.create(getContext(), null, null));
         }
         return isFrozenNode.executeIsFrozen(value);
     }
 
     private Object dup(VirtualFrame frame, Object value) {
         if (dupNode == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             dupNode = insert(DispatchHeadNodeFactory.createMethodCall(getContext()));
         }
-        return dupNode.call(frame, value, "dup", null);
+        return dupNode.call(frame, value, "dup");
     }
 
     private Object freeze(VirtualFrame frame, Object value) {
         if (freezeNode == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             freezeNode = insert(DispatchHeadNodeFactory.createMethodCall(getContext()));
         }
-        return freezeNode.call(frame, value, "freeze", null);
+        return freezeNode.call(frame, value, "freeze");
     }
 
 }

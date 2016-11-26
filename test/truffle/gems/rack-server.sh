@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 
+source test/truffle/common.sh.inc
+
 set -e
 
-bin/jruby bin/gem install rack -v 1.6.1
-source test/truffle/common/test_server.sh.inc
-ruby -X+T -Ilib/ruby/gems/shared/gems/rack-1.6.1/lib test/truffle/gems/rack-server/rack-server.rb & test_server
+GEM_HOME=${GEM_HOME:-lib/ruby/gems/shared}
+
+jt ruby -I$GEM_HOME/gems/rack-1.6.1/lib test/truffle/gems/rack-server/rack-server.rb & test_server

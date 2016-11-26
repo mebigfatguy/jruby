@@ -326,6 +326,12 @@ modes.each do |mode|
       expect{run("def foo(a, b=(c=1));[a,b,c];end;foo(1,2,3)")}.to raise_error(ArgumentError)
     end
 
+    it "compiles accesses of uninitialized variables" do
+      run("def foo(a); if a; b = 1; end; b.inspect; end; foo(false)") {|result| expect(result).to eq("nil") }
+      run("def foo(a); a ||= (b = 1); b.inspect; end; foo(1)") {|result| expect(result).to eq("nil")}
+      run("def foo(a); a &&= (b = 1); b.inspect; end; foo(nil)") {|result| expect(result).to eq("nil")}
+    end
+
     it "compiles grouped and intra-list rest args" do
       run("def foo(a, (b, *, c), d, *e, f, (g, *h, i), j); [a,b,c,d,e,f,g,h,i,j]; end; foo(1,[2,3,4],5,6,7,8,[9,10,11],12)") do |result|
         expect(result).to eq([1, 2, 4, 5, [6, 7], 8, 9, [10], 11, 12])
@@ -1132,6 +1138,21 @@ modes.each do |mode|
 
       run(code) do |x|
         x.should == :ok
+      end
+    end
+
+    it "compiles calls with one fixnum arg that do not have optimized paths" do
+      run('ary = []; ary.push(1)') {|x| expect(x).to eq([1]) }
+    end
+
+    it "compiles calls with one float arg that do not have optimized paths" do
+      run('ary = []; ary.push(1.0)') {|x| expect(x).to eq([1.0]) }
+    end
+
+    # jruby/jruby#4148
+    it "binds variable-arity calls to attributes properly" do
+      run('a_class = Class.new do; attr_accessor :foo; end; a = a_class.new; a.foo = 1; ary = []; a.foo(*ary)') do |x|
+        expect(x).to eq(1)
       end
     end
   end

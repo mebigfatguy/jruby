@@ -48,10 +48,10 @@ public abstract class NumericToFloatNode extends RubyNode {
 
     private Object callToFloat(VirtualFrame frame, DynamicObject value) {
         if (toFloatCallNode == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             toFloatCallNode = insert(DispatchHeadNodeFactory.createMethodCall(getContext(), MissingBehavior.RETURN_MISSING));
         }
-        return toFloatCallNode.call(frame, value, method, null);
+        return toFloatCallNode.call(frame, value, method);
     }
 
     @Specialization(guards = "isNumeric(frame, value)")

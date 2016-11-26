@@ -9,11 +9,12 @@
  */
 package org.jruby.truffle.tools.callgraph;
 
-import com.oracle.truffle.api.frame.FrameSlot;
 import com.oracle.truffle.api.source.SourceSection;
 import org.jruby.truffle.language.methods.SharedMethodInfo;
 
 import java.io.PrintStream;
+import java.util.Map;
+import java.util.Set;
 
 public class SimpleWriter {
 
@@ -44,7 +45,7 @@ public class SimpleWriter {
         if (sourceSection == null || sourceSection.getSource() == null) {
             sourceName = "(unknown)";
         } else {
-            sourceName = sourceSection.getSource().getName();
+            sourceName = sourceSection.getSource().getPath();
         }
 
         final int startLine;
@@ -86,15 +87,25 @@ public class SimpleWriter {
                 ids.getId(version.getMethod()),
                 ids.getId(version));
 
+        for (String evalCode : version.getEvalCode()) {
+            stream.printf("eval %d %s%n",
+                    ids.getId(version),
+                    evalCode);
+        }
+
         for (CallSiteVersion callSiteVersion : version.getCallSiteVersions().values()) {
             write(callSiteVersion);
         }
 
-        for (FrameSlot slot : version.getRootNode().getFrameDescriptor().getSlots()) {
-            stream.printf("local %d %s %s%n",
-                    ids.getId(version),
-                    slot.getIdentifier(),
-                    slot.getKind());
+        for (Map.Entry<String, Set<String>> x : callGraph.getLocalTypes(version.getRootNode()).entrySet()) {
+            final String name = x.getKey();
+
+            for (String type : x.getValue()) {
+                stream.printf("local %d %s %s%n",
+                        ids.getId(version),
+                        name,
+                        type);
+            }
         }
     }
 

@@ -12,18 +12,21 @@ package org.jruby.truffle.tools.callgraph;
 import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
-import com.oracle.truffle.api.nodes.NodeVisitor;
 import com.oracle.truffle.api.nodes.RootNode;
 import org.jruby.truffle.language.RubyRootNode;
 
+import java.lang.reflect.Field;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 public class MethodVersion {
 
     private final Method method;
     private final RubyRootNode rootNode;
     private final Map<CallSite, CallSiteVersion> callSiteVersions = new HashMap<>();
+    private final Set<String> evalCode = new HashSet<>();
 
     public MethodVersion(Method method, RubyRootNode rootNode) {
         this.method = method;
@@ -40,14 +43,9 @@ public class MethodVersion {
     }
 
     public void resolve() {
-        rootNode.accept(new NodeVisitor() {
-
-            @Override
-            public boolean visit(Node node) {
-                resolve(node);
-                return true;
-            }
-
+        rootNode.accept(node -> {
+            resolve(node);
+            return true;
         });
     }
 
@@ -72,6 +70,14 @@ public class MethodVersion {
             }
 
             callSiteVersion.getCalls().add(calls);
+        } else if (node.getClass().getName().indexOf("EvalNoBindingCachedNode") != -1) {
+            try {
+                final Field f = node.getClass().getDeclaredField("cachedSource");
+                f.setAccessible(true);
+                evalCode.add(f.get(node).toString());
+            } catch (IllegalAccessException | NoSuchFieldException e) {
+                e.printStackTrace();
+            }
         }
     }
 
@@ -90,5 +96,9 @@ public class MethodVersion {
 
     public RubyRootNode getRootNode() {
         return rootNode;
+    }
+
+    public Set<String> getEvalCode() {
+        return evalCode;
     }
 }

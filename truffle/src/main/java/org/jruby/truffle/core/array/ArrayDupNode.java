@@ -20,7 +20,6 @@ import org.jruby.truffle.Layouts;
 import org.jruby.truffle.RubyContext;
 import org.jruby.truffle.language.RubyNode;
 import org.jruby.truffle.language.objects.AllocateObjectNode;
-import org.jruby.truffle.language.objects.AllocateObjectNodeGen;
 
 /**
  * Dup an array, without using any method lookup. This isn't a call - it's an operation on a core class.
@@ -33,7 +32,7 @@ public abstract class ArrayDupNode extends RubyNode {
 
     public ArrayDupNode(RubyContext context, SourceSection sourceSection) {
         super(context, sourceSection);
-        allocateNode = AllocateObjectNodeGen.create(context, sourceSection, null, null);
+        allocateNode = AllocateObjectNode.create();
     }
 
     public abstract DynamicObject executeDup(VirtualFrame frame, DynamicObject array);

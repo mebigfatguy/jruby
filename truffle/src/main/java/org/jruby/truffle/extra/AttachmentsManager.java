@@ -13,9 +13,7 @@ package org.jruby.truffle.extra;
 import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.instrumentation.EventBinding;
-import com.oracle.truffle.api.instrumentation.EventContext;
 import com.oracle.truffle.api.instrumentation.ExecutionEventNode;
-import com.oracle.truffle.api.instrumentation.ExecutionEventNodeFactory;
 import com.oracle.truffle.api.instrumentation.Instrumenter;
 import com.oracle.truffle.api.instrumentation.SourceSectionFilter;
 import com.oracle.truffle.api.nodes.DirectCallNode;
@@ -51,13 +49,7 @@ public class AttachmentsManager {
                 .tagIs(LineTag.class)
                 .build();
 
-        return instrumenter.attachFactory(filter, new ExecutionEventNodeFactory() {
-
-            public ExecutionEventNode create(EventContext eventContext) {
-                return new AttachmentEventNode(context, block);
-            }
-
-        });
+        return instrumenter.attachFactory(filter, eventContext -> new AttachmentEventNode(context, block));
     }
 
     private static class AttachmentEventNode extends ExecutionEventNode {

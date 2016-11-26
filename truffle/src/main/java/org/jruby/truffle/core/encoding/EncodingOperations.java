@@ -12,54 +12,14 @@
  */
 package org.jruby.truffle.core.encoding;
 
-import com.oracle.truffle.api.CompilerDirectives;
-import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.object.DynamicObject;
 import org.jcodings.Encoding;
-import org.jcodings.EncodingDB;
 import org.jruby.truffle.Layouts;
-import org.jruby.util.ByteList;
 
 public abstract class EncodingOperations {
 
     public static Encoding getEncoding(DynamicObject rubyEncoding) {
-        Encoding encoding = Layouts.ENCODING.getEncoding(rubyEncoding);
-
-        if (encoding == null) {
-            CompilerDirectives.transferToInterpreter();
-
-            final ByteList name = Layouts.ENCODING.getName(rubyEncoding);
-            encoding = loadEncoding(name);
-            Layouts.ENCODING.setEncoding(rubyEncoding, encoding);
-        }
-
-        return encoding;
-    }
-
-    @TruffleBoundary
-    private static EncodingDB.Entry findEncodingEntry(ByteList bytes) {
-        return EncodingDB.getEncodings().get(bytes.getUnsafeBytes(), bytes.getBegin(), bytes.getBegin() + bytes.getRealSize());
-    }
-
-    @TruffleBoundary
-    private static EncodingDB.Entry findAliasEntry(ByteList bytes) {
-        return EncodingDB.getAliases().get(bytes.getUnsafeBytes(), bytes.getBegin(), bytes.getBegin() + bytes.getRealSize());
-    }
-
-    private static EncodingDB.Entry findEncodingOrAliasEntry(ByteList bytes) {
-        final EncodingDB.Entry e = findEncodingEntry(bytes);
-        return e != null ? e : findAliasEntry(bytes);
-    }
-
-    @TruffleBoundary
-    private static Encoding loadEncoding(ByteList name) {
-        final EncodingDB.Entry entry = findEncodingOrAliasEntry(name);
-
-        if (entry == null) {
-            return null;
-        }
-
-        return entry.getEncoding();
+        return Layouts.ENCODING.getEncoding(rubyEncoding);
     }
 
 }

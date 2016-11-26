@@ -16,14 +16,15 @@ import org.jruby.truffle.core.array.ArrayUtils;
 import org.jruby.truffle.core.numeric.FixnumLowerNodeGen;
 import org.jruby.truffle.language.RubyNode;
 import org.jruby.truffle.language.arguments.MissingArgumentBehavior;
+import org.jruby.truffle.language.arguments.ProfileArgumentNode;
 import org.jruby.truffle.language.arguments.ReadPreArgumentNode;
+import org.jruby.truffle.language.arguments.ReadSelfNode;
 import org.jruby.truffle.language.control.ReturnID;
-import org.jruby.truffle.language.objects.SelfNode;
 
 import java.util.ArrayList;
 import java.util.List;
 
-public class PrimitiveNodeConstructor implements PrimitiveConstructor {
+public class PrimitiveNodeConstructor {
 
     private final Primitive annotation;
     private final NodeFactory<? extends RubyNode> factory;
@@ -33,12 +34,10 @@ public class PrimitiveNodeConstructor implements PrimitiveConstructor {
         this.factory = factory;
     }
 
-    @Override
     public int getPrimitiveArity() {
         return factory.getExecutionSignature().size();
     }
 
-    @Override
     public RubyNode createCallPrimitiveNode(RubyContext context, SourceSection sourceSection, ReturnID returnID) {
         int argumentsCount = getPrimitiveArity();
         final List<RubyNode> arguments = new ArrayList<>(argumentsCount);
@@ -48,13 +47,13 @@ public class PrimitiveNodeConstructor implements PrimitiveConstructor {
         List<Class<?>> signature = signatures.get(0);
 
         if (annotation.needsSelf()) {
-            arguments.add(new SelfNode(context, sourceSection));
+            arguments.add(transformArgument(new ProfileArgumentNode(new ReadSelfNode()), 0));
             argumentsCount--;
         }
 
         for (int n = 0; n < argumentsCount; n++) {
-            RubyNode readArgumentNode = new ReadPreArgumentNode(n, MissingArgumentBehavior.UNDEFINED);
-            arguments.add(transformArgument(readArgumentNode, n));
+            RubyNode readArgumentNode = new ProfileArgumentNode(new ReadPreArgumentNode(n, MissingArgumentBehavior.UNDEFINED));
+            arguments.add(transformArgument(readArgumentNode, n + 1));
         }
 
         if (!CoreMethodNodeManager.isSafe(context, annotation.unsafe())) {
@@ -85,12 +84,15 @@ public class PrimitiveNodeConstructor implements PrimitiveConstructor {
     }
 
     public RubyNode createInvokePrimitiveNode(RubyContext context, SourceSection sourceSection, RubyNode[] arguments) {
+        assert arguments.length == getPrimitiveArity();
+
         if (!CoreMethodNodeManager.isSafe(context, annotation.unsafe())) {
             return new UnsafeNode(context, sourceSection);
         }
 
-        for (int n = 1; n < arguments.length; n++) {
-            arguments[n] = transformArgument(arguments[n], n);
+        for (int n = 0; n < arguments.length; n++) {
+            int nthArg = annotation.needsSelf() ? n : n + 1;
+            arguments[n] = transformArgument(arguments[n], nthArg);
         }
 
         List<List<Class<?>>> signatures = factory.getNodeSignatures();
@@ -98,17 +100,17 @@ public class PrimitiveNodeConstructor implements PrimitiveConstructor {
         assert signatures.size() == 1;
         List<Class<?>> signature = signatures.get(0);
 
+        final RubyNode primitiveNode;
         if (signature.get(0) == RubyContext.class) {
-            return new InvokePrimitiveNode(context, sourceSection,
-                    factory.createNode(context, sourceSection, arguments));
+            primitiveNode = factory.createNode(context, sourceSection, arguments);
         } else {
-            return new InvokePrimitiveNode(context, sourceSection,
-                    factory.createNode(new Object[]{arguments}));
+            primitiveNode = factory.createNode(new Object[] { arguments });
         }
+        return new InvokePrimitiveNode(context, sourceSection, primitiveNode);
     }
 
     private RubyNode transformArgument(RubyNode argument, int n) {
-        if (ArrayUtils.contains(annotation.lowerFixnumParameters(), n)) {
+        if (ArrayUtils.contains(annotation.lowerFixnum(), n)) {
             return FixnumLowerNodeGen.create(null, null, argument);
         } else {
             return argument;

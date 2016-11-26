@@ -81,9 +81,14 @@ import java.util.regex.Pattern;
 public class RubyInstanceConfig {
 
     public RubyInstanceConfig() {
-        currentDirectory = Ruby.isSecurityRestricted() ? "/" : JRubyFile.getFileProperty("user.dir");
+        this(Ruby.isSecurityRestricted());
+    }
 
-        if (Ruby.isSecurityRestricted()) {
+    public RubyInstanceConfig(boolean isSecurityRestricted) {
+        this.isSecurityRestricted = isSecurityRestricted;
+        currentDirectory = isSecurityRestricted ? "/" : JRubyFile.getFileProperty("user.dir");
+
+        if (isSecurityRestricted) {
             compileMode = CompileMode.OFF;
             jitLogging = false;
             jitDumping = false;
@@ -117,6 +122,7 @@ public class RubyInstanceConfig {
     }
 
     public RubyInstanceConfig(RubyInstanceConfig parentConfig) {
+        isSecurityRestricted = parentConfig.isSecurityRestricted;
         currentDirectory = parentConfig.getCurrentDirectory();
         compileMode = parentConfig.getCompileMode();
         jitLogging = parentConfig.jitLogging;
@@ -165,18 +171,22 @@ public class RubyInstanceConfig {
 
     public void tryProcessArgumentsWithRubyopts() {
         try {
-            // environment defaults to System.getenv normally
-            Object rubyoptObj = environment.get("RUBYOPT");
-            String rubyopt = rubyoptObj == null ? null : rubyoptObj.toString();
-
-            if (rubyopt == null || rubyopt.length() == 0) return;
-
-            String[] rubyoptArgs = rubyopt.split("\\s+");
-            if (rubyoptArgs.length != 0) {
-                new ArgumentProcessor(rubyoptArgs, false, true, true, this).processArguments();
-            }
+            processArgumentsWithRubyopts();
         } catch (SecurityException se) {
             // ignore and do nothing
+        }
+    }
+
+    public void processArgumentsWithRubyopts() {
+        // environment defaults to System.getenv normally
+        Object rubyoptObj = environment.get("RUBYOPT");
+        String rubyopt = rubyoptObj == null ? null : rubyoptObj.toString();
+
+        if (rubyopt == null || rubyopt.length() == 0) return;
+
+        String[] rubyoptArgs = rubyopt.split("\\s+");
+        if (rubyoptArgs.length != 0) {
+            new ArgumentProcessor(rubyoptArgs, false, true, true, this).processArguments();
         }
     }
 
@@ -297,7 +307,7 @@ public class RubyInstanceConfig {
         String newJRubyHome = null;
 
         // try the normal property first
-        if (!Ruby.isSecurityRestricted()) {
+        if (!isSecurityRestricted) {
             newJRubyHome = SafePropertyAccessor.getProperty("jruby.home");
         }
 
@@ -394,7 +404,7 @@ public class RubyInstanceConfig {
                 final String script = getScriptFileName();
                 FileResource resource = JRubyFile.createRestrictedResource(getCurrentDirectory(), getScriptFileName());
                 if (resource != null && resource.exists()) {
-                    if (resource.isFile() || resource.isSymLink()) {
+                    if (resource.canRead() && !resource.isDirectory()) {
                         if (isXFlag()) {
                             // search for a shebang line and
                             // return the script between shebang and __END__ or CTRL-Z (0x1A)
@@ -1492,6 +1502,8 @@ public class RubyInstanceConfig {
     // Configuration fields.
     ////////////////////////////////////////////////////////////////////////////
 
+    private final boolean isSecurityRestricted;
+
     /**
      * Indicates whether the script must be extracted from script source
      */
@@ -1749,7 +1761,7 @@ public class RubyInstanceConfig {
     /**
      * Enable use of the native Java version of the 'net/protocol' library.
      *
-     * Set with the <tt>jruby.thread.pool.max</tt> system property.
+     * Set with the <tt>jruby.native.net.protocol</tt> system property.
      */
     public static final boolean NATIVE_NET_PROTOCOL = Options.NATIVE_NET_PROTOCOL.load();
 
@@ -1833,6 +1845,7 @@ public class RubyInstanceConfig {
 
     public static final boolean JUMPS_HAVE_BACKTRACE = Options.JUMP_BACKTRACE.load();
 
+    @Deprecated
     public static final boolean JIT_CACHE_ENABLED = Options.JIT_CACHE.load();
 
     public static final boolean REFLECTED_HANDLES = Options.REFLECTED_HANDLES.load();
@@ -1887,11 +1900,11 @@ public class RubyInstanceConfig {
     private static int initGlobalJavaVersion() {
         final String specVersion = Options.BYTECODE_VERSION.load();
         switch ( specVersion ) {
-            case "1.6" : return Opcodes.V1_6;
-            case "1.7" : return Opcodes.V1_7;
-            case "1.8" : return Opcodes.V1_8;
+            case "1.6" : return Opcodes.V1_6; // 50
+            case "1.7" : return Opcodes.V1_7; // 51
+            case "1.8" : case "8" : return Opcodes.V1_8; // 52
             // NOTE: JDK 9 now returns "9" instead of "1.9"
-            case "1.9" : case "9" : return Opcodes.V1_8; // +1
+            case "1.9" : case "9" : return Opcodes.V1_8 + 1; // 53
             default :
                 System.err.println("unsupported Java version \"" + specVersion + "\", defaulting to 1.7");
                 return Opcodes.V1_7;

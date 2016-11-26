@@ -14,10 +14,9 @@ import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.object.DynamicObject;
-import com.oracle.truffle.api.source.SourceSection;
+import com.oracle.truffle.api.profiles.ConditionProfile;
 import org.jcodings.specific.UTF8Encoding;
 import org.jruby.truffle.Layouts;
-import org.jruby.truffle.RubyContext;
 import org.jruby.truffle.core.array.ArrayUtils;
 import org.jruby.truffle.core.cast.BooleanCastNode;
 import org.jruby.truffle.core.cast.BooleanCastNodeGen;
@@ -38,7 +37,10 @@ public class RubyCallNode extends RubyNode {
     @Children private final RubyNode[] arguments;
 
     private final boolean isSplatted;
+    private final boolean ignoreVisibility;
     private final boolean isVCall;
+    private final boolean isSafeNavigation;
+    private final boolean isAttrAssign;
 
     @Child private CallDispatchHeadNode dispatchHead;
 
@@ -51,42 +53,63 @@ public class RubyCallNode extends RubyNode {
     @Child private CallDispatchHeadNode respondToMissing;
     @Child private BooleanCastNode respondToMissingCast;
 
-    private final boolean ignoreVisibility;
+    private final ConditionProfile nilProfile;
 
-    public RubyCallNode(RubyContext context, SourceSection section, String methodName, RubyNode receiver, RubyNode block, boolean isSplatted, RubyNode... arguments) {
-        this(context, section, methodName, receiver, block, isSplatted, false, arguments);
-    }
+    public RubyCallNode(RubyCallNodeParameters parameters) {
+        super(parameters.getContext(), parameters.getSection());
 
-    public RubyCallNode(RubyContext context, SourceSection section, String methodName, RubyNode receiver, RubyNode block, boolean isSplatted, boolean ignoreVisibility, RubyNode... arguments) {
-        this(context, section, methodName, receiver, block, isSplatted, ignoreVisibility, false, arguments);
-    }
+        this.methodName = parameters.getMethodName();
+        this.receiver = parameters.getReceiver();
+        this.arguments = parameters.getArguments();
 
-    public RubyCallNode(RubyContext context, SourceSection section, String methodName, RubyNode receiver, RubyNode block, boolean isSplatted, boolean ignoreVisibility, boolean isVCall, RubyNode... arguments) {
-        super(context, section);
-
-        this.methodName = methodName;
-        this.receiver = receiver;
-        this.arguments = arguments;
-        if (block == null) {
+        if (parameters.getBlock() == null) {
             this.block = null;
         } else {
-            this.block = ProcOrNullNodeGen.create(context, section, block);
+            this.block = ProcOrNullNodeGen.create(parameters.getContext(), parameters.getSection(), parameters.getBlock());
         }
 
-        this.isSplatted = isSplatted;
-        this.isVCall = isVCall;
-        this.ignoreVisibility = ignoreVisibility;
+        this.isSplatted = parameters.isSplatted();
+        this.ignoreVisibility = parameters.isIgnoreVisibility();
+        this.isVCall = parameters.isVCall();
+        this.isSafeNavigation = parameters.isSafeNavigation();
+        this.isAttrAssign = parameters.isAttrAssign();
 
-        this.dispatchHead = DispatchHeadNodeFactory.createMethodCall(context, ignoreVisibility);
+        if (parameters.isSafeNavigation()) {
+            nilProfile = ConditionProfile.createCountingProfile();
+        } else {
+            nilProfile = null;
+        }
     }
 
     @Override
     public Object execute(VirtualFrame frame) {
         final Object receiverObject = receiver.execute(frame);
+
+        if (isSafeNavigation) {
+            if (nilProfile.profile(receiverObject == nil())) {
+                return nil();
+            }
+        }
+
         final Object[] argumentsObjects = executeArguments(frame);
+
+        return executeWithArgumentsEvaluated(frame, receiverObject, argumentsObjects);
+    }
+
+    public Object executeWithArgumentsEvaluated(VirtualFrame frame, Object receiverObject, Object[] argumentsObjects) {
         final DynamicObject blockObject = executeBlock(frame);
 
-        return dispatchHead.call(frame, receiverObject, methodName, blockObject, argumentsObjects);
+        if (dispatchHead == null) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            dispatchHead = insert(DispatchHeadNodeFactory.createMethodCall(getContext(), ignoreVisibility));
+        }
+
+        final Object returnValue = dispatchHead.dispatch(frame, receiverObject, methodName, blockObject, argumentsObjects);
+        if (isAttrAssign) {
+            return argumentsObjects[argumentsObjects.length - 1];
+        } else {
+            return returnValue;
+        }
     }
 
     private DynamicObject executeBlock(VirtualFrame frame) {
@@ -118,7 +141,7 @@ public class RubyCallNode extends RubyNode {
         // TODO(CS): what happens if isn't just one argument, or it isn't an Array?
 
         if (!RubyGuards.isRubyArray(argument)) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             throw new UnsupportedOperationException(argument.getClass().toString());
         }
 
@@ -201,17 +224,17 @@ public class RubyCallNode extends RubyNode {
 
     private Object respondToMissing(VirtualFrame frame, Object receiverObject) {
         if (respondToMissing == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             respondToMissing = insert(DispatchHeadNodeFactory.createMethodCall(getContext(), true, MissingBehavior.RETURN_MISSING));
         }
         final DynamicObject method = getContext().getSymbolTable().getSymbol(methodName);
-        return respondToMissing.call(frame, receiverObject, "respond_to_missing?", null, method, false);
+        return respondToMissing.call(frame, receiverObject, "respond_to_missing?", method, false);
     }
 
     private boolean castRespondToMissingToBoolean(VirtualFrame frame, final Object r) {
         if (respondToMissingCast == null) {
-            CompilerDirectives.transferToInterpreter();
-            respondToMissingCast = insert(BooleanCastNodeGen.create(getContext(), getSourceSection(), null));
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            respondToMissingCast = insert(BooleanCastNodeGen.create(null));
         }
         return respondToMissingCast.executeBoolean(frame, r);
     }

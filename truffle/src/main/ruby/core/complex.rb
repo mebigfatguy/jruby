@@ -321,7 +321,7 @@ class Complex < Numeric
   end
 
   def hash
-    @real.hash ^ @imag.hash
+    Truffle.invoke_primitive :fixnum_memhash, @real.hash, @imag.hash
   end
 
   def inspect
@@ -358,4 +358,15 @@ class Complex < Numeric
   attr_reader :real
   attr_reader :imag
   alias_method :imaginary, :imag
+
+  private
+
+  def real=(real)
+    @real = real
+  end
+
+  def imag=(imag)
+    @imag = imag
+  end
+
 end

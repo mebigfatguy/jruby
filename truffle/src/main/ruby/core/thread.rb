@@ -60,8 +60,6 @@
 
 class Thread
 
-  attr_reader :recursive_objects
-
   # Implementation note: ideally, the recursive_objects
   # lookup table would be different per method call.
   # Currently it doesn't cause problems, but if ever
@@ -195,6 +193,21 @@ class Thread
     Kernel.raise ThreadError, "Thread#priority= primitive failed"
   end
 
+  def name
+    Truffle.primitive :thread_get_name
+    Kernel.raise ThreadError, "Thread#name primitive failed"
+  end
+
+  def name=(val)
+    unless val.nil?
+      val = Rubinius::Type.check_null_safe(StringValue(val))
+      raise ArgumentError, "ASCII incompatible encoding #{val.encoding.name}" unless val.encoding.ascii_compatible?
+      # TODO BJF Aug 27, 2016 Need to rb_str_new_frozen the val here and SET_ANOTHER_THREAD_NAME
+    end
+    Truffle.invoke_primitive :thread_set_name, self, val
+    val
+  end
+
   def inspect
     stat = status()
     stat = "dead" unless stat
@@ -253,23 +266,48 @@ class Thread
     @randomizer ||= Rubinius::Randomizer.new
   end
 
+  # Fiber-local variables
+
+  def [](name)
+    var = name.to_sym
+    Rubinius.synchronize(self) do
+      locals = Truffle.invoke_primitive :thread_get_fiber_locals, self
+      Truffle.invoke_primitive :object_ivar_get, locals, var
+    end
+  end
+
+  def []=(name, value)
+    var = name.to_sym
+    Rubinius.synchronize(self) do
+      Truffle.check_frozen
+      locals = Truffle.invoke_primitive :thread_get_fiber_locals, self
+      Truffle.invoke_primitive :object_ivar_set, locals, var, value
+    end
+  end
+
+  def keys
+    Rubinius.synchronize(self) do
+      locals = Truffle.invoke_primitive :thread_get_fiber_locals, self
+      locals.instance_variables
+    end
+  end
+
+  # Thread-local variables
+
   # TODO (pitr-ch 06-Apr-2016): thread local variables do not have to be synchronized,
   # they are only to protect against non-thread-safe Hash implementation
 
-  def [](symbol)
-    __thread_local_variables_lock { __thread_local_variables[symbol.to_sym] }
+  def thread_variable_get(name)
+    __thread_local_variables_lock { __thread_local_variables[name.to_sym] }
   end
 
-  def []=(symbol, value)
-    __thread_local_variables_lock { __thread_local_variables[symbol.to_sym] = value }
+  def thread_variable_set(name, value)
+    __thread_local_variables_lock { __thread_local_variables[name.to_sym] = value }
   end
 
   def thread_variable?(symbol)
     __thread_local_variables_lock { __thread_local_variables.has_key? symbol.to_sym }
   end
-
-  alias_method :thread_variable_get, :[]
-  alias_method :thread_variable_set, :[]=
 
   LOCK = Mutex.new
 
@@ -329,15 +367,38 @@ class Thread
 end
 
 class ThreadGroup
-
-  attr_reader :list
-
   def initialize
-    @list = []
+    @enclosed = false
+  end
+
+  def enclose
+    @enclosed = true
+  end
+
+  def enclosed?
+    @enclosed
   end
 
   def add(thread)
-    @list.push thread
+    raise ThreadError, "can't move to the frozen thread group" if self.frozen?
+    raise ThreadError, "can't move to the enclosed thread group" if self.enclosed?
+
+    from_tg = thread.group
+    return nil unless from_tg
+    raise ThreadError, "can't move from the frozen thread group" if from_tg.frozen?
+    raise ThreadError, "can't move from the enclosed thread group" if from_tg.enclosed?
+
+    Truffle.invoke_primitive :thread_set_group, thread, self
+    self
   end
 
+  def list
+    Thread.list.select { |th| th.group == self }
+  end
+
+  Default = ThreadGroup.new
+
 end
+Truffle.invoke_primitive :thread_set_group, Thread.current, ThreadGroup::Default
+
+

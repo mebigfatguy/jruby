@@ -167,9 +167,14 @@ public class ParserSupport {
         return currentScope.assign(lexer.getPosition(), name.intern(), makeNullNil(value));
     }
 
+    // We know it has to be tLABEL or tIDENTIFIER so none of the other assignable logic is needed
+    public AssignableNode assignableKeyword(String name, Node value) {
+        return currentScope.assignKeyword(lexer.getPosition(), name.intern(), makeNullNil(value));
+    }
+
     // Only calls via f_kw so we know it has to be tLABEL
     public AssignableNode assignableLabel(String name, Node value) {
-        return currentScope.assign(lexer.getPosition(), name, makeNullNil(value));
+        return currentScope.assignKeyword(lexer.getPosition(), name, makeNullNil(value));
     }
     
     protected void getterIdentifierError(ISourcePosition position, String identifier) {
@@ -1337,7 +1342,7 @@ public class ParserSupport {
     public void compile_error(String message) { // mri: rb_compile_error_with_enc
         String line = lexer.getCurrentLine();
         ISourcePosition position = lexer.getPosition();
-        String errorMessage = lexer.getFile() + ":" + position.getLine() + ": ";
+        String errorMessage = lexer.getFile() + ":" + (position.getLine() + 1) + ": ";
 
         if (line != null && line.length() > 5) {
             boolean addNewline = message != null && ! message.endsWith("\n");
@@ -1384,7 +1389,13 @@ public class ParserSupport {
         // Joni doesn't support these modifiers - but we can fix up in some cases - let the error delay until we try that
         if (stringValue.startsWith("(?u)") || stringValue.startsWith("(?a)") || stringValue.startsWith("(?d)"))
             return;
-        RubyRegexp.newRegexp(getConfiguration().getRuntime(), value, options);
+
+        try {
+            // This is only for syntax checking but this will as a side-effect create an entry in the regexp cache.
+            RubyRegexp.newRegexpParser(getConfiguration().getRuntime(), value, (RegexpOptions)options.clone());
+        } catch (RaiseException re) {
+            compile_error(re.getMessage());
+        }
     }
 
     public Node newRegexpNode(ISourcePosition position, Node contents, RegexpNode end) {

@@ -1,3 +1,11 @@
+# Copyright (c) 2015 Oracle and/or its affiliates. All rights reserved. This
+# code is released under a tri EPL/GPL/LGPL license. You can use it,
+# redistribute it and/or modify it under the terms of the:
+#
+# Eclipse Public License version 1.0
+# GNU General Public License version 2
+# GNU Lesser General Public License version 2.1
+
 # Copyright (c) 2007-2015, Evan Phoenix and contributors
 # All rights reserved.
 #
@@ -28,12 +36,7 @@ module Rubinius
   class Mirror
     module Process
       def self.set_status_global(status)
-        ::Thread.current[:$?] = status
-      end
-
-      def self.fork
-        Truffle.primitive :vm_fork
-        raise PrimitiveFailure, "Rubinius::Mirror::Process.fork primitive failed"
+        $? = status
       end
 
       def self.exec(*args)
@@ -43,7 +46,7 @@ module Rubinius
       end
 
       def self.spawn(*args)
-        exe = Execute.new(*args)
+        exe = Execute.new(*args) 
 
         begin
           pid = exe.spawn exe.options, exe.command, exe.argv
@@ -53,11 +56,6 @@ module Rubinius
         end
 
         pid
-      end
-
-      def self.backtick(str)
-        Truffle.primitive :vm_backtick
-        raise PrimitiveFailure, "Rubinius::Mirror::Process.backtick primitive failed"
       end
 
       class Execute
@@ -128,8 +126,7 @@ module Rubinius
                 key.each { |k| redirect @options, convert_io_fd(k), to }
               when :unsetenv_others
                 if value
-                  array = @options[:env] = []
-                  ENV.each_key { |k| array << convert_env_key(k) << nil }
+                  @options[:unsetenv_others] = true
                 end
               when :pgroup
                 if value == true
@@ -155,7 +152,7 @@ module Rubinius
             array = (@options[:env] ||= [])
 
             env.each do |key, value|
-              array << convert_env_key(key) << convert_env_value(value)
+              array << [convert_env_key(key), convert_env_value(value)]
             end
           end
         end
@@ -232,16 +229,6 @@ module Rubinius
           end
         end
 
-        # Mapping of string open modes to integer oflag versions.
-        OFLAGS = {
-          "r"  => ::File::RDONLY,
-          "r+" => ::File::RDWR   | ::File::CREAT,
-          "w"  => ::File::WRONLY | ::File::CREAT  | ::File::TRUNC,
-          "w+" => ::File::RDWR   | ::File::CREAT  | ::File::TRUNC,
-          "a"  => ::File::WRONLY | ::File::APPEND | ::File::CREAT,
-          "a+" => ::File::RDWR   | ::File::APPEND | ::File::CREAT
-        }
-
         def convert_file_mode(obj)
           case obj
           when ::Fixnum
@@ -249,7 +236,7 @@ module Rubinius
           when ::String
             OFLAGS[obj]
           when nil
-            OFLAG["r"]
+            OFLAGS["r"]
           else
             Rubinius::Type.coerce_to obj, Integer, :to_int
           end
@@ -270,14 +257,30 @@ module Rubinius
           Rubinius::Type.check_null_safe(StringValue(value))
         end
 
-        def spawn_setup
-          Truffle.invoke_primitive :vm_spawn_setup, @options
-        end
+        # Mapping of string open modes to integer oflag versions.
+        OFLAGS = {
+          "r"  => ::File::RDONLY,
+          "r+" => ::File::RDWR   | ::File::CREAT,
+          "w"  => ::File::WRONLY | ::File::CREAT  | ::File::TRUNC,
+          "w+" => ::File::RDWR   | ::File::CREAT  | ::File::TRUNC,
+          "a"  => ::File::WRONLY | ::File::APPEND | ::File::CREAT,
+          "a+" => ::File::RDWR   | ::File::APPEND | ::File::CREAT
+        }
 
-        def spawn(exe, command, args)
-          Truffle.primitive :vm_spawn
-          raise PrimitiveFailure,
-            "Rubinius::Mirror::Process::Execute#spawn primitive failed"
+        def spawn(options, command, arguments)
+          options ||= {}
+          env = options.delete(:unsetenv_others) ? {} : ENV.to_hash
+          if add_to_env = options.delete(:env)
+            env.merge! Hash[add_to_env]
+          end
+
+          env_array = env.map { |k, v| "#{k}=#{v}" }
+
+          if arguments.empty?
+            command, arguments = 'bash', ['bash', '-c', command]
+          end
+
+          Truffle::Process.spawn command, arguments, env_array, options
         end
 
         def exec(command, args)

@@ -28,13 +28,13 @@ import org.jruby.truffle.language.methods.InternalMethod;
 import org.jruby.truffle.language.objects.IsFrozenNode;
 import org.jruby.truffle.language.objects.ObjectGraphNode;
 import org.jruby.truffle.language.objects.ObjectIDOperations;
+import org.jruby.truffle.language.objects.shared.SharedObjects;
 
 import java.util.ArrayDeque;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
@@ -145,24 +145,38 @@ public class ModuleFields implements ModuleChain, ObjectGraphNode {
         }
     }
 
+    private boolean hasPrependedModules() {
+        return start.getParentModule() != this;
+    }
+
     @TruffleBoundary
     public void initCopy(DynamicObject from) {
         assert RubyGuards.isRubyModule(from);
 
         // Do not copy name, the copy is an anonymous module
-        final ModuleFields fields = Layouts.MODULE.getFields(from);
-        this.methods.putAll(fields.methods);
-        this.constants.putAll(fields.constants);
-        this.classVariables.putAll(fields.classVariables);
+        final ModuleFields fromFields = Layouts.MODULE.getFields(from);
+        this.methods.putAll(fromFields.methods);
+        this.constants.putAll(fromFields.constants);
+        this.classVariables.putAll(fromFields.classVariables);
 
-        if (fields.start.getParentModule() != fields) {
-            this.parentModule = fields.start.getParentModule();
+        if (fromFields.hasPrependedModules()) {
+            // Then the parent is the first in the prepend chain
+            this.parentModule = fromFields.start.getParentModule();
         } else {
-            this.parentModule = fields.parentModule;
+            this.parentModule = fromFields.parentModule;
         }
 
-        for (DynamicObject ancestor : fields.ancestors()) {
+        for (DynamicObject ancestor : fromFields.parentAncestors()) {
             Layouts.MODULE.getFields(ancestor).addDependent(rubyModuleObject);
+        }
+
+        if (Layouts.CLASS.isClass(rubyModuleObject)) {
+            // Singleton classes cannot be instantiated
+            if (!Layouts.CLASS.getIsSingleton(from)) {
+                ClassNodes.setInstanceFactory(rubyModuleObject, from);
+            }
+
+            Layouts.CLASS.setSuperclass(rubyModuleObject, Layouts.CLASS.getSuperclass(from));
         }
     }
 
@@ -187,6 +201,8 @@ public class ModuleFields implements ModuleChain, ObjectGraphNode {
         if (ModuleOperations.includesModule(module, rubyModuleObject)) {
             throw new RaiseException(context.getCoreExceptions().argumentError("cyclic include detected", currentNode));
         }
+
+        SharedObjects.propagate(rubyModuleObject, module);
 
         // We need to include the module ancestors in reverse order for a given inclusionPoint
         ModuleChain inclusionPoint = this;
@@ -248,6 +264,8 @@ public class ModuleFields implements ModuleChain, ObjectGraphNode {
             throw new RaiseException(context.getCoreExceptions().argumentError("cyclic prepend detected", currentNode));
         }
 
+        SharedObjects.propagate(rubyModuleObject, module);
+
         ModuleChain mod = Layouts.MODULE.getFields(module).start;
         ModuleChain cur = start;
         while (mod != null && !(mod instanceof ModuleFields && RubyGuards.isRubyClass(((ModuleFields) mod).rubyModuleObject))) {
@@ -295,10 +313,13 @@ public class ModuleFields implements ModuleChain, ObjectGraphNode {
         // TODO(CS): warn when redefining a constant
         // TODO (nirvdrum 18-Feb-15): But don't warn when redefining an autoloaded constant.
 
+        SharedObjects.propagate(rubyModuleObject, value);
+
         while (true) {
             final RubyConstant previous = constants.get(name);
             final boolean isPrivate = previous != null && previous.isPrivate();
-            final RubyConstant newValue = new RubyConstant(rubyModuleObject, value, isPrivate, autoload);
+            final boolean isDeprecated = previous != null && previous.isDeprecated();
+            final RubyConstant newValue = new RubyConstant(rubyModuleObject, value, isPrivate, autoload, isDeprecated);
 
             if ((previous == null) ? (constants.putIfAbsent(name, newValue) == null) : constants.replace(name, previous, newValue)) {
                 newLexicalVersion();
@@ -318,7 +339,10 @@ public class ModuleFields implements ModuleChain, ObjectGraphNode {
     @TruffleBoundary
     public void addMethod(RubyContext context, Node currentNode, InternalMethod method) {
         assert ModuleOperations.canBindMethodTo(method.getDeclaringModule(), rubyModuleObject) ||
-                ModuleOperations.assignableTo(context.getCoreLibrary().getObjectClass(), method.getDeclaringModule());
+                ModuleOperations.assignableTo(context.getCoreLibrary().getObjectClass(), method.getDeclaringModule()) ||
+                // TODO (pitr-ch 24-Jul-2016): find out why undefined methods sometimes do not match above assertion
+                // e.g. "block in _routes route_set.rb:525" in rails/actionpack/lib/action_dispatch/routing/
+                (method.isUndefined() && methods.get(method.getName()) != null);
 
         if (context.getCoreLibrary().isLoadingRubyCore()) {
             final InternalMethod currentMethod = methods.get(method.getName());
@@ -329,11 +353,21 @@ public class ModuleFields implements ModuleChain, ObjectGraphNode {
         }
 
         checkFrozen(context, currentNode);
+
+        if (SharedObjects.isShared(rubyModuleObject)) {
+            for (DynamicObject object : method.getAdjacentObjects()) {
+                SharedObjects.writeBarrier(object);
+            }
+        }
+
         methods.put(method.getName(), method);
-        newVersion();
+
+        if (!context.getCoreLibrary().isInitializing()) {
+            newVersion();
+        }
 
         if (context.getCoreLibrary().isLoaded() && !method.isUndefined()) {
-            if (Layouts.CLASS.isClass(rubyModuleObject) && Layouts.CLASS.getIsSingleton(rubyModuleObject)) {
+            if (RubyGuards.isSingletonClass(rubyModuleObject)) {
                 DynamicObject receiver = Layouts.CLASS.getAttached(rubyModuleObject);
                 context.send(
                         receiver,
@@ -433,6 +467,22 @@ public class ModuleFields implements ModuleChain, ObjectGraphNode {
         }
     }
 
+    @TruffleBoundary
+    public void deprecateConstant(RubyContext context, Node currentNode, String name) {
+        while (true) {
+            final RubyConstant previous = constants.get(name);
+
+            if (previous == null) {
+                throw new RaiseException(context.getCoreExceptions().nameErrorUninitializedConstant(rubyModuleObject, name, currentNode));
+            }
+
+            if (constants.replace(name, previous, previous.withDeprecated())) {
+                newLexicalVersion();
+                break;
+            }
+        }
+    }
+
     public RubyContext getContext() {
         return context;
     }
@@ -480,16 +530,17 @@ public class ModuleFields implements ModuleChain, ObjectGraphNode {
     }
 
     public void newVersion() {
-        newVersion(new HashSet<DynamicObject>(), false);
+        newVersion(new HashSet<>(), false);
     }
 
     public void newLexicalVersion() {
-        newVersion(new HashSet<DynamicObject>(), true);
+        newVersion(new HashSet<>(), true);
     }
 
     public void newVersion(Set<DynamicObject> alreadyInvalidated, boolean considerLexicalDependents) {
-        if (alreadyInvalidated.contains(rubyModuleObject))
+        if (alreadyInvalidated.contains(rubyModuleObject)) {
             return;
+        }
 
         unmodifiedAssumption.invalidate();
         alreadyInvalidated.add(rubyModuleObject);
@@ -513,8 +564,9 @@ public class ModuleFields implements ModuleChain, ObjectGraphNode {
 
     public void addLexicalDependent(DynamicObject lexicalChild) {
         assert RubyGuards.isRubyModule(lexicalChild);
-        if (lexicalChild != rubyModuleObject)
+        if (lexicalChild != rubyModuleObject) {
             lexicalDependents.add(lexicalChild);
+        }
     }
 
     public Assumption getUnmodifiedAssumption() {
@@ -553,25 +605,17 @@ public class ModuleFields implements ModuleChain, ObjectGraphNode {
 
     public Iterable<DynamicObject> ancestors() {
         final ModuleChain top = start;
-        return new Iterable<DynamicObject>() {
-            @Override
-            public Iterator<DynamicObject> iterator() {
-                return new AncestorIterator(top);
-            }
-        };
+        return () -> new AncestorIterator(top);
     }
 
     public Iterable<DynamicObject> parentAncestors() {
         final ModuleChain top = start;
-        return new Iterable<DynamicObject>() {
-            @Override
-            public Iterator<DynamicObject> iterator() {
-                final AncestorIterator iterator = new AncestorIterator(top);
-                if (iterator.hasNext()) {
-                    iterator.next();
-                }
-                return iterator;
+        return () -> {
+            final AncestorIterator iterator = new AncestorIterator(top);
+            if (iterator.hasNext()) {
+                iterator.next();
             }
+            return iterator;
         };
     }
 
@@ -581,12 +625,7 @@ public class ModuleFields implements ModuleChain, ObjectGraphNode {
     public Iterable<DynamicObject> prependedAndIncludedModules() {
         final ModuleChain top = start;
         final ModuleFields currentModule = this;
-        return new Iterable<DynamicObject>() {
-            @Override
-            public Iterator<DynamicObject> iterator() {
-                return new IncludedModulesIterator(top, currentModule);
-            }
-        };
+        return () -> new IncludedModulesIterator(top, currentModule);
     }
 
     public Collection<DynamicObject> filterMethods(RubyContext context, boolean includeAncestors, MethodFilter filter) {

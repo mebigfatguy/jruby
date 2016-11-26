@@ -36,6 +36,7 @@ import org.jruby.truffle.language.RubyNode;
 import org.jruby.truffle.language.SnippetNode;
 import org.jruby.truffle.language.control.RaiseException;
 import org.jruby.truffle.language.dispatch.CallDispatchHeadNode;
+import org.jruby.truffle.language.objects.AllocateObjectNode;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -88,6 +89,7 @@ public abstract class BigDecimalNodes {
     @NodeChild(value = "precision", type = RubyNode.class)
     public abstract static class AddNode extends AbstractAddNode {
 
+        @Override
         @Specialization(guards = {
                 "isNormal(a)",
                 "isNormalRubyBigDecimal(b)"
@@ -96,6 +98,7 @@ public abstract class BigDecimalNodes {
             return super.add(frame, a, b, precision);
         }
 
+        @Override
         @Specialization(guards = {
                 "isRubyBigDecimal(b)",
                 "!isNormal(a) || !isNormal(b)"
@@ -129,6 +132,7 @@ public abstract class BigDecimalNodes {
     @NodeChild(value = "precision", type = RubyNode.class)
     public abstract static class SubNode extends AbstractSubNode {
 
+        @Override
         @Specialization(guards = {
                 "isNormal(a)",
                 "isNormalRubyBigDecimal(b)"
@@ -137,6 +141,7 @@ public abstract class BigDecimalNodes {
             return super.subNormal(frame, a, b, precision);
         }
 
+        @Override
         @Specialization(guards = {
                 "isRubyBigDecimal(b)",
                 "!isNormal(a) || !isNormal(b)"
@@ -235,6 +240,7 @@ public abstract class BigDecimalNodes {
     @NodeChild(value = "precision", type = RubyNode.class)
     public abstract static class MultNode extends AbstractMultNode {
 
+        @Override
         @Specialization(guards = {
                 "isNormal(a)",
                 "isNormalRubyBigDecimal(b)"
@@ -243,6 +249,7 @@ public abstract class BigDecimalNodes {
             return super.mult(frame, a, b, precision);
         }
 
+        @Override
         @Specialization(guards = {
                 "isNormal(a)",
                 "isSpecialRubyBigDecimal(b)"
@@ -251,6 +258,7 @@ public abstract class BigDecimalNodes {
             return super.multNormalSpecial(frame, a, b, precision);
         }
 
+        @Override
         @Specialization(guards = {
                 "!isNormal(a)",
                 "isNormalRubyBigDecimal(b)"
@@ -259,6 +267,7 @@ public abstract class BigDecimalNodes {
             return super.multSpecialNormal(frame, a, b, precision);
         }
 
+        @Override
         @Specialization(guards = {
                 "!isNormal(a)",
                 "isSpecialRubyBigDecimal(b)"
@@ -324,7 +333,7 @@ public abstract class BigDecimalNodes {
                 throw new RaiseException(coreExceptions().zeroDivisionError(this));
             } else {
                 final Object result = div(frame, a, b, 0);
-                return floorNode.call(frame, result, "floor", null);
+                return floorNode.call(frame, result, "floor");
             }
         }
 
@@ -369,6 +378,7 @@ public abstract class BigDecimalNodes {
             }
         }
 
+        @Override
         @Specialization(guards = {
                 "isNormal(a)",
                 "isSpecialRubyBigDecimal(b)"
@@ -402,6 +412,7 @@ public abstract class BigDecimalNodes {
             }
         }
 
+        @Override
         @Specialization(guards = {
                 "!isNormal(a)",
                 "isNormalRubyBigDecimal(b)"
@@ -432,6 +443,7 @@ public abstract class BigDecimalNodes {
             }
         }
 
+        @Override
         @Specialization(guards = {
                 "!isNormal(a)",
                 "isSpecialRubyBigDecimal(b)"
@@ -465,7 +477,7 @@ public abstract class BigDecimalNodes {
         public Object divmod(VirtualFrame frame, DynamicObject a, DynamicObject b) {
             final BigDecimal[] result = divmodBigDecimal(Layouts.BIG_DECIMAL.getValue(a), Layouts.BIG_DECIMAL.getValue(b));
             final Object[] store = new Object[]{ createBigDecimal(frame, result[0]), createBigDecimal(frame, result[1]) };
-            return Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), store, store.length);
+            return createArray(store, store.length);
         }
 
         @Specialization(guards = {
@@ -476,7 +488,7 @@ public abstract class BigDecimalNodes {
         })
         public Object divmodZeroDividend(VirtualFrame frame, DynamicObject a, DynamicObject b) {
             final Object[] store = new Object[]{ createBigDecimal(frame, BigDecimal.ZERO), createBigDecimal(frame, BigDecimal.ZERO) };
-            return Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), store, store.length);
+            return createArray(store, store.length);
         }
 
         @Specialization(guards = {
@@ -507,7 +519,7 @@ public abstract class BigDecimalNodes {
 
             if (nanProfile.profile(aType == BigDecimalType.NAN || bType == BigDecimalType.NAN)) {
                 final Object[] store = new Object[]{ createBigDecimal(frame, BigDecimalType.NAN), createBigDecimal(frame, BigDecimalType.NAN) };
-                return Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), store, store.length);
+                return createArray(store, store.length);
             }
 
             if (nanProfile.profile(bType == BigDecimalType.NEGATIVE_ZERO || (bType == BigDecimalType.NORMAL && isNormalZero(b)))) {
@@ -516,23 +528,23 @@ public abstract class BigDecimalNodes {
 
             if (normalNegProfile.profile(aType == BigDecimalType.NEGATIVE_ZERO || (aType == BigDecimalType.NORMAL && isNormalZero(a)))) {
                 final Object[] store = new Object[]{ createBigDecimal(frame, BigDecimal.ZERO), createBigDecimal(frame, BigDecimal.ZERO) };
-                return Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), store, store.length);
+                return createArray(store, store.length);
             }
 
             if (negNormalProfile.profile(aType == BigDecimalType.POSITIVE_INFINITY || aType == BigDecimalType.NEGATIVE_INFINITY)) {
                 final int signA = aType == BigDecimalType.POSITIVE_INFINITY ? 1 : -1;
-                final int signB = Integer.signum(signIntegerCast.executeCastInt(signCall.call(frame, b, "sign", null)));
+                final int signB = Integer.signum(signIntegerCast.executeCastInt(signCall.call(frame, b, "sign")));
                 final int sign = signA * signB; // is between -1 and 1, 0 when nan
 
                 final BigDecimalType type = new BigDecimalType[]{ BigDecimalType.NEGATIVE_INFINITY, BigDecimalType.NAN, BigDecimalType.POSITIVE_INFINITY }[sign + 1];
 
                 final Object[] store = new Object[]{ createBigDecimal(frame, type), createBigDecimal(frame, BigDecimalType.NAN) };
-                return Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), store, store.length);
+                return createArray(store, store.length);
             }
 
             if (infinityProfile.profile(bType == BigDecimalType.POSITIVE_INFINITY || bType == BigDecimalType.NEGATIVE_INFINITY)) {
                 final Object[] store = new Object[]{ createBigDecimal(frame, BigDecimal.ZERO), createBigDecimal(frame, a) };
-                return Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), store, store.length);
+                return createArray(store, store.length);
             }
 
             throw new UnsupportedOperationException("unreachable code branch");
@@ -645,7 +657,6 @@ public abstract class BigDecimalNodes {
 
             if (normalNegProfile.profile(bType == BigDecimalType.NEGATIVE_ZERO
                     || (bType == BigDecimalType.NORMAL && isNormalZero(b)))) {
-                CompilerDirectives.transferToInterpreter();
                 throw new RaiseException(coreExceptions().zeroDivisionError(this));
             }
 
@@ -768,7 +779,7 @@ public abstract class BigDecimalNodes {
                     value = Integer.signum(exponent) == 1 ? BigDecimal.ZERO : BigDecimalType.NAN;
                     break;
                 default:
-                    CompilerDirectives.transferToInterpreter();
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
                     throw new UnsupportedOperationException("unreachable code branch for value: " + Layouts.BIG_DECIMAL.getType(a));
             }
 
@@ -843,7 +854,7 @@ public abstract class BigDecimalNodes {
                     negZeroProfile.enter();
                     return createBigDecimal(frame, sqrt(BigDecimal.ZERO, new MathContext(precision, getRoundMode(frame))));
                 default:
-                    CompilerDirectives.transferToInterpreter();
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
                     throw new UnsupportedOperationException("unreachable code branch for value: " + Layouts.BIG_DECIMAL.getType(a));
             }
         }
@@ -1035,7 +1046,7 @@ public abstract class BigDecimalNodes {
                     name = "SIGN_NaN";
                     break;
                 default:
-                    CompilerDirectives.transferToInterpreter();
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
                     throw new UnsupportedOperationException("unreachable code branch for value: " + Layouts.BIG_DECIMAL.getType(value));
             }
 
@@ -1044,7 +1055,7 @@ public abstract class BigDecimalNodes {
 
         private int getConstant(VirtualFrame frame, String name) {
             if (sign == null) {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 sign = insert(GetIntegerConstantNodeGen.create(null, null));
             }
 
@@ -1135,7 +1146,7 @@ public abstract class BigDecimalNodes {
                     result = type;
                     break;
                 default:
-                    CompilerDirectives.transferToInterpreter();
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
                     throw new UnsupportedOperationException("unreachable code branch for value: " + type);
             }
 
@@ -1206,7 +1217,7 @@ public abstract class BigDecimalNodes {
                     nanProfile.enter();
                     throw new RaiseException(coreExceptions().floatDomainErrorResultsToNaN(this));
                 default:
-                    CompilerDirectives.transferToInterpreter();
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
                     throw new UnsupportedOperationException("unreachable code branch for value: " + Layouts.BIG_DECIMAL.getType(value));
 
             }
@@ -1272,14 +1283,14 @@ public abstract class BigDecimalNodes {
         @Specialization(guards = "isNormal(value)")
         public Object precsNormal(DynamicObject value) {
             final BigDecimal bigDecimalValue = Layouts.BIG_DECIMAL.getValue(value).abs();
-            return Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), new int[]{
+            return createArray(new int[] {
                     bigDecimalValue.stripTrailingZeros().unscaledValue().toString().length(),
                     nearestBiggerMultipleOf4(bigDecimalValue.unscaledValue().toString().length()) }, 2);
         }
 
         @Specialization(guards = "!isNormal(value)")
         public Object precsSpecial(DynamicObject value) {
-            return Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), new int[]{ 1, 1 }, 2);
+            return createArray(new int[] { 1, 1 }, 2);
         }
 
     }
@@ -1314,7 +1325,7 @@ public abstract class BigDecimalNodes {
                     nanProfile.enter();
                     return Double.NaN;
                 default:
-                    CompilerDirectives.transferToInterpreter();
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
                     throw new UnsupportedOperationException("unreachable code branch for value: " + Layouts.BIG_DECIMAL.getType(value));
             }
         }
@@ -1370,7 +1381,7 @@ public abstract class BigDecimalNodes {
                 case NEGATIVE_ZERO:
                     return 0;
                 default:
-                    CompilerDirectives.transferToInterpreter();
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
                     throw new UnsupportedOperationException("unreachable code branch for value: " + Layouts.BIG_DECIMAL.getType(value));
             }
         }
@@ -1379,9 +1390,11 @@ public abstract class BigDecimalNodes {
     @CoreMethod(names = "allocate", constructor = true)
     public abstract static class AllocateNode extends CoreMethodArrayArgumentsNode {
 
+        @Child private AllocateObjectNode allocateNode = AllocateObjectNode.create();
+
         @Specialization
         public DynamicObject allocate(DynamicObject rubyClass) {
-            return Layouts.BIG_DECIMAL.createBigDecimal(Layouts.CLASS.getInstanceFactory(rubyClass), BigDecimal.ZERO, BigDecimalType.NORMAL);
+            return allocateNode.allocate(rubyClass, BigDecimal.ZERO, BigDecimalType.NORMAL);
         }
 
     }

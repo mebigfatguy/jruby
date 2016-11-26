@@ -55,7 +55,7 @@ public abstract class SplatCastNode extends RubyNode {
         // Calling private #to_a is allowed for the *splat operator.
         dup = ArrayDupNodeGen.create(context, sourceSection, null);
         respondToToA = DispatchHeadNodeFactory.createMethodCall(context, true, MissingBehavior.RETURN_MISSING);
-        respondToCast = BooleanCastNodeGen.create(context, sourceSection, null);
+        respondToCast = BooleanCastNodeGen.create(null);
         toA = DispatchHeadNodeFactory.createMethodCall(context, true, MissingBehavior.RETURN_MISSING);
         String name = useToAry ? "to_ary" : "to_a";
         conversionMethod = context.getSymbolTable().getSymbol(name);
@@ -67,13 +67,13 @@ public abstract class SplatCastNode extends RubyNode {
     public Object splatNil(VirtualFrame frame, Object nil) {
         switch (nilBehavior) {
             case EMPTY_ARRAY:
-                return Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), null, 0);
+            return createArray(null, 0);
 
             case ARRAY_WITH_NIL:
-                return Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), new Object[]{nil()}, 1);
+            return createArray(new Object[] { nil() }, 1);
 
             case CONVERT:
-                return toA.call(frame, nil, "to_a", null);
+                return toA.call(frame, nil, "to_a");
 
             case NIL:
                 return nil;
@@ -87,7 +87,7 @@ public abstract class SplatCastNode extends RubyNode {
     @Specialization(guards = "isRubyArray(array)")
     public DynamicObject splat(VirtualFrame frame, DynamicObject array) {
         // TODO(cs): is it necessary to dup here in all cases?
-        // It is needed at least for [*ary] (parsed as just a SplatNode) and b = *ary.
+        // It is needed at least for [*ary] (parsed as just a SplatParseNode) and b = *ary.
         return dup.executeDup(frame, array);
     }
 
@@ -95,21 +95,21 @@ public abstract class SplatCastNode extends RubyNode {
     public DynamicObject splat(VirtualFrame frame, Object object,
             @Cached("create()") BranchProfile errorProfile) {
         // MRI tries to call dynamic respond_to? here.
-        Object respondToResult = respondToToA.call(frame, object, "respond_to?", null, conversionMethod, true);
+        Object respondToResult = respondToToA.call(frame, object, "respond_to?", conversionMethod, true);
         if (respondToResult != DispatchNode.MISSING && respondToCast.executeBoolean(frame, respondToResult)) {
-            final Object array = toA.call(frame, object, conversionMethod, null);
+            final Object array = toA.call(frame, object, conversionMethod);
 
             if (RubyGuards.isRubyArray(array)) {
                 return (DynamicObject) array;
             } else if (array == nil() || array == DispatchNode.MISSING) {
-                return Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), new Object[] { object }, 1);
+                return createArray(new Object[] { object }, 1);
             } else {
                 errorProfile.enter();
                 throw new RaiseException(coreExceptions().typeErrorCantConvertTo(object, "Array", Layouts.SYMBOL.getString(conversionMethod), array, this));
             }
         }
 
-        return Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), new Object[] { object }, 1);
+        return createArray(new Object[] { object }, 1);
     }
 
 }

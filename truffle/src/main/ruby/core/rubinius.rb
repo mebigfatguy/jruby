@@ -90,9 +90,6 @@ module Rubinius
   end
 
   class Backtrace
-    def self.detect_backtrace(bt)
-      false
-    end
   end
 
   def self.watch_signal(sig, ignored)
@@ -135,6 +132,10 @@ module Rubinius
   def self.get_user_home(name)
     Truffle.primitive :vm_get_user_home
     raise PrimitiveFailure, "Rubinius.get_user_home primitive failed"
+  end
+  
+  def self.synchronize(object, &block)
+    Truffle::System.synchronized(object, &block)
   end
 
   module Metrics

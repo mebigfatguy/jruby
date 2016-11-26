@@ -92,13 +92,8 @@ public class ObjectSpaceManager {
         if (finalizerThread == null) {
             // TODO(CS): should we be running this in a real Ruby thread?
 
-            finalizerThread = ThreadManager.createRubyThread(context, context.getCoreLibrary().getThreadClass());
-            ThreadManager.initialize(finalizerThread, context, null, "finalizer", new Runnable() {
-                @Override
-                public void run() {
-                    runFinalizers();
-                }
-            });
+            finalizerThread = ThreadManager.createRubyThread(context);
+            ThreadManager.initialize(finalizerThread, context, null, "finalizer", () -> runFinalizers());
         }
     }
 
@@ -115,12 +110,7 @@ public class ObjectSpaceManager {
 
         while (true) {
             // Wait on the finalizer queue
-            FinalizerReference finalizerReference = context.getThreadManager().runUntilResult(null, new ThreadManager.BlockingAction<FinalizerReference>() {
-                @Override
-                public FinalizerReference block() throws InterruptedException {
-                    return (FinalizerReference) finalizerQueue.remove();
-                }
-            });
+            FinalizerReference finalizerReference = (FinalizerReference) context.getThreadManager().runUntilResult(null, () -> finalizerQueue.remove());
 
             runFinalizers(context, finalizerReference);
         }
@@ -194,7 +184,7 @@ public class ObjectSpaceManager {
         final long id = nextObjectID.getAndAdd(2);
 
         if (id < 0) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             throw new RuntimeException("Object IDs exhausted");
         }
 

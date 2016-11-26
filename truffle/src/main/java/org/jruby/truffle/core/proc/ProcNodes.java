@@ -36,7 +36,6 @@ import org.jruby.truffle.language.control.RaiseException;
 import org.jruby.truffle.language.dispatch.CallDispatchHeadNode;
 import org.jruby.truffle.language.dispatch.DispatchHeadNodeFactory;
 import org.jruby.truffle.language.objects.AllocateObjectNode;
-import org.jruby.truffle.language.objects.AllocateObjectNodeGen;
 
 @CoreClass("Proc")
 public abstract class ProcNodes {
@@ -111,7 +110,7 @@ public abstract class ProcNodes {
                     Layouts.PROC.getBlock(block),
                     Layouts.PROC.getFrameOnStackMarker(block));
 
-            getInitializeNode().call(frame, proc, "initialize", block, args);
+            getInitializeNode().callWithBlock(frame, proc, "initialize", block, args);
 
             return proc;
         }
@@ -122,8 +121,8 @@ public abstract class ProcNodes {
 
         private AllocateObjectNode getAllocateObjectNode() {
             if (allocateObjectNode == null) {
-                CompilerDirectives.transferToInterpreter();
-                allocateObjectNode = insert(AllocateObjectNodeGen.create(getContext(), null, null, null));
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                allocateObjectNode = insert(AllocateObjectNode.create());
             }
 
             return allocateObjectNode;
@@ -131,7 +130,7 @@ public abstract class ProcNodes {
 
         private CallDispatchHeadNode getInitializeNode() {
             if (initializeNode == null) {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 initializeNode = insert(DispatchHeadNodeFactory.createMethodCallOnSelf(getContext()));
             }
 
@@ -164,8 +163,8 @@ public abstract class ProcNodes {
 
         private AllocateObjectNode getAllocateObjectNode() {
             if (allocateObjectNode == null) {
-                CompilerDirectives.transferToInterpreter();
-                allocateObjectNode = insert(AllocateObjectNodeGen.create(getContext(), null, null, null));
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                allocateObjectNode = insert(AllocateObjectNode.create());
             }
 
             return allocateObjectNode;
@@ -194,7 +193,7 @@ public abstract class ProcNodes {
 
     }
 
-    @CoreMethod(names = {"call", "[]", "yield"}, rest = true, needsBlock = true)
+    @CoreMethod(names = { "call", "[]", "yield" }, rest = true, needsBlock = true)
     public abstract static class CallNode extends YieldingCoreMethodNode {
 
         @Specialization
@@ -204,7 +203,7 @@ public abstract class ProcNodes {
 
         @Specialization
         public Object call(VirtualFrame frame, DynamicObject proc, Object[] args, DynamicObject block) {
-            return yieldWithModifiedBlock(frame, proc, block, args);
+            return yieldWithBlock(frame, proc, block, args);
         }
 
     }
@@ -247,7 +246,7 @@ public abstract class ProcNodes {
                         sourceSection.getSource().getName(), UTF8Encoding.INSTANCE));
 
                 final Object[] objects = new Object[]{file, sourceSection.getStartLine()};
-                return Layouts.ARRAY.createArray(coreLibrary().getArrayFactory(), objects, objects.length);
+                return createArray(objects, objects.length);
             }
         }
 

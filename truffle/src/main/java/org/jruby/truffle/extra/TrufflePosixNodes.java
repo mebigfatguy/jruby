@@ -20,26 +20,21 @@ import com.oracle.truffle.api.source.SourceSection;
 import jnr.constants.platform.Fcntl;
 import jnr.ffi.Pointer;
 import org.jcodings.specific.UTF8Encoding;
-import org.jruby.platform.Platform;
 import org.jruby.truffle.Layouts;
 import org.jruby.truffle.RubyContext;
 import org.jruby.truffle.builtins.CoreClass;
 import org.jruby.truffle.builtins.CoreMethod;
 import org.jruby.truffle.builtins.CoreMethodArrayArgumentsNode;
-import org.jruby.truffle.core.rope.CodeRange;
 import org.jruby.truffle.core.rope.RopeNodes;
 import org.jruby.truffle.core.rope.RopeNodesFactory;
 import org.jruby.truffle.core.string.StringOperations;
 import org.jruby.truffle.core.time.GetTimeZoneNode;
 import org.jruby.truffle.extra.ffi.PointerPrimitiveNodes;
-import org.jruby.truffle.language.NotProvided;
 import org.jruby.truffle.language.SnippetNode;
 import org.jruby.truffle.language.control.RaiseException;
 import org.jruby.truffle.language.objects.AllocateObjectNode;
-import org.jruby.truffle.language.objects.AllocateObjectNodeGen;
 import org.jruby.truffle.platform.UnsafeGroup;
-
-import java.nio.charset.StandardCharsets;
+import org.jruby.truffle.platform.signal.Signal;
 
 import static org.jruby.truffle.core.string.StringOperations.decodeUTF8;
 
@@ -52,7 +47,7 @@ public abstract class TrufflePosixNodes {
         }
     }
 
-    @CoreMethod(names = "access", isModuleFunction = true, required = 2, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "access", isModuleFunction = true, required = 2, lowerFixnum = 2, unsafe = UnsafeGroup.IO)
     public abstract static class AccessNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -64,7 +59,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "chmod", isModuleFunction = true, required = 2, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "chmod", isModuleFunction = true, required = 2, lowerFixnum = 2, unsafe = UnsafeGroup.IO)
     public abstract static class ChmodNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -75,7 +70,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "chown", isModuleFunction = true, required = 3, lowerFixnumParameters = {1, 2}, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "chown", isModuleFunction = true, required = 3, lowerFixnum = { 1, 2 }, unsafe = UnsafeGroup.IO)
     public abstract static class ChownNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -86,7 +81,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "dup", isModuleFunction = true, required = 1, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "dup", isModuleFunction = true, required = 1, lowerFixnum = 1, unsafe = UnsafeGroup.IO)
     public abstract static class DupNode extends CoreMethodArrayArgumentsNode {
 
         @Specialization
@@ -96,23 +91,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "environ", isModuleFunction = true, unsafe = {UnsafeGroup.MEMORY, UnsafeGroup.PROCESSES})
-    public abstract static class EnvironNode extends CoreMethodArrayArgumentsNode {
-
-        @Child private AllocateObjectNode allocateObjectNode;
-
-        public EnvironNode(RubyContext context, SourceSection sourceSection) {
-            super(context, sourceSection);
-            allocateObjectNode = AllocateObjectNodeGen.create(context, sourceSection, null, null);
-        }
-
-        @Specialization
-        public DynamicObject environ() {
-            return allocateObjectNode.allocate(coreLibrary().getRubiniusFFIPointerClass(), posix().environ());
-        }
-    }
-
-    @CoreMethod(names = "fchmod", isModuleFunction = true, required = 2, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "fchmod", isModuleFunction = true, required = 2, lowerFixnum = {1, 2}, unsafe = UnsafeGroup.IO)
     public abstract static class FchmodNode extends CoreMethodArrayArgumentsNode {
 
         @Specialization
@@ -123,7 +102,7 @@ public abstract class TrufflePosixNodes {
     }
 
 
-    @CoreMethod(names = "fsync", isModuleFunction = true, required = 1, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "fsync", isModuleFunction = true, required = 1, lowerFixnum = 1, unsafe = UnsafeGroup.IO)
     public abstract static class FsyncNode extends CoreMethodArrayArgumentsNode {
 
         @Specialization
@@ -134,7 +113,7 @@ public abstract class TrufflePosixNodes {
     }
 
 
-    @CoreMethod(names = "fchown", isModuleFunction = true, required = 3, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "fchown", isModuleFunction = true, required = 3, lowerFixnum = {1, 2, 3}, unsafe = UnsafeGroup.IO)
     public abstract static class FchownNode extends CoreMethodArrayArgumentsNode {
 
         @Specialization
@@ -190,18 +169,19 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "getgroups", isModuleFunction = true, required = 2, unsafe = {UnsafeGroup.MEMORY, UnsafeGroup.PROCESSES})
+    @CoreMethod(names = "getgroups", isModuleFunction = true, required = 2, lowerFixnum = 1, unsafe = {UnsafeGroup.MEMORY, UnsafeGroup.PROCESSES})
     public abstract static class GetGroupsNode extends CoreMethodArrayArgumentsNode {
 
+        @TruffleBoundary
         @Specialization(guards = "isNil(pointer)")
         public int getGroupsNil(int max, DynamicObject pointer) {
-            return Platform.getPlatform().getGroups(null).length;
+            return getContext().getNativePlatform().getPosix().getgroups().length;
         }
 
-        @CompilerDirectives.TruffleBoundary
+        @TruffleBoundary
         @Specialization(guards = "isRubyPointer(pointer)")
         public int getGroups(int max, DynamicObject pointer) {
-            final long[] groups = Platform.getPlatform().getGroups(null);
+            final long[] groups = getContext().getNativePlatform().getPosix().getgroups();
 
             final Pointer pointerValue = Layouts.POINTER.getPointer(pointer);
 
@@ -216,7 +196,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "getrlimit", isModuleFunction = true, required = 2, unsafe = {UnsafeGroup.PROCESSES, UnsafeGroup.MEMORY})
+    @CoreMethod(names = "getrlimit", isModuleFunction = true, required = 2, lowerFixnum = 1, unsafe = {UnsafeGroup.PROCESSES, UnsafeGroup.MEMORY})
     public abstract static class GetRLimitNode extends CoreMethodArrayArgumentsNode {
 
         @TruffleBoundary(throwsControlFlowException = true)
@@ -243,7 +223,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "memset", isModuleFunction = true, required = 3, unsafe = UnsafeGroup.MEMORY)
+    @CoreMethod(names = "memset", isModuleFunction = true, required = 3, lowerFixnum = {2, 3}, unsafe = UnsafeGroup.MEMORY)
     public abstract static class MemsetNode extends CoreMethodArrayArgumentsNode {
 
         @Specialization(guards = "isRubyPointer(pointer)")
@@ -259,18 +239,18 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "putenv", isModuleFunction = true, required = 1, unsafe = UnsafeGroup.PROCESSES)
-    public abstract static class PutenvNode extends CoreMethodArrayArgumentsNode {
+    @CoreMethod(names = "mkfifo", isModuleFunction = true, required = 2, lowerFixnum = 2, unsafe = UnsafeGroup.IO)
+    public abstract static class MkfifoNode extends CoreMethodArrayArgumentsNode {
 
-        @CompilerDirectives.TruffleBoundary
-        @Specialization(guards = "isRubyString(nameValuePair)")
-        public int putenv(DynamicObject nameValuePair) {
-            throw new UnsupportedOperationException("Not yet implemented in jnr-posix");
+        @TruffleBoundary
+        @Specialization(guards = "isRubyString(path)")
+        public int mkfifo(DynamicObject path, int mode) {
+            return posix().mkfifo(StringOperations.getString(path), mode);
         }
 
     }
 
-    @CoreMethod(names = "readlink", isModuleFunction = true, required = 3, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "readlink", isModuleFunction = true, required = 3, lowerFixnum = 3, unsafe = UnsafeGroup.IO)
     public abstract static class ReadlinkNode extends CoreMethodArrayArgumentsNode {
 
         @TruffleBoundary(throwsControlFlowException = true)
@@ -286,7 +266,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "setenv", isModuleFunction = true, required = 3, unsafe = UnsafeGroup.PROCESSES)
+    @CoreMethod(names = "setenv", isModuleFunction = true, required = 3, lowerFixnum = 3, unsafe = UnsafeGroup.PROCESSES)
     public abstract static class SetenvNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -295,6 +275,17 @@ public abstract class TrufflePosixNodes {
             final String nameString = decodeUTF8(name);
             invalidateENV(nameString);
             return posix().setenv(nameString, decodeUTF8(value), overwrite);
+        }
+
+    }
+
+    @CoreMethod(names = "lchmod", isModuleFunction = true, required = 2, lowerFixnum = 2, unsafe = UnsafeGroup.IO)
+    public abstract static class LchmodNode extends CoreMethodArrayArgumentsNode {
+
+        @CompilerDirectives.TruffleBoundary
+        @Specialization(guards = "isRubyString(path)")
+        public int lchmod(DynamicObject path, int mode) {
+            return posix().lchmod(decodeUTF8(path), mode);
         }
 
     }
@@ -321,7 +312,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "umask", isModuleFunction = true, required = 1, unsafe = UnsafeGroup.PROCESSES)
+    @CoreMethod(names = "umask", isModuleFunction = true, required = 1, lowerFixnum = 1, unsafe = UnsafeGroup.PROCESSES)
     public abstract static class UmaskNode extends CoreMethodArrayArgumentsNode {
 
         @Specialization
@@ -360,7 +351,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "mkdir", isModuleFunction = true, required = 2, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "mkdir", isModuleFunction = true, required = 2, lowerFixnum = 1, unsafe = UnsafeGroup.IO)
     public abstract static class MkdirNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -382,7 +373,8 @@ public abstract class TrufflePosixNodes {
             final int result = posix().chdir(pathString);
 
             if (result == 0) {
-                getContext().getJRubyRuntime().setCurrentDirectory(pathString);
+                final String cwd = posix().getcwd();
+                getContext().setCurrentDirectory(cwd);
             }
 
             return result;
@@ -390,7 +382,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "getpriority", isModuleFunction = true, required = 2, lowerFixnumParameters = {0, 1}, unsafe = UnsafeGroup.PROCESSES)
+    @CoreMethod(names = "getpriority", isModuleFunction = true, required = 2, lowerFixnum = { 1, 2 }, unsafe = UnsafeGroup.PROCESSES)
     public abstract static class GetPriorityNode extends CoreMethodArrayArgumentsNode {
 
         @Specialization
@@ -400,7 +392,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "setgid", isModuleFunction = true, required = 1, lowerFixnumParameters = 0, unsafe = UnsafeGroup.PROCESSES)
+    @CoreMethod(names = "setgid", isModuleFunction = true, required = 1, lowerFixnum = 1, unsafe = UnsafeGroup.PROCESSES)
     public abstract static class SetgidNode extends CoreMethodArrayArgumentsNode {
 
         @Specialization
@@ -410,7 +402,17 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "setpriority", isModuleFunction = true, required = 3, lowerFixnumParameters = {0, 1, 2}, unsafe = UnsafeGroup.PROCESSES)
+    @CoreMethod(names = "setpgid", isModuleFunction = true, required = 2, lowerFixnum = {1, 2}, unsafe = UnsafeGroup.PROCESSES)
+    public abstract static class SetpgidNode extends CoreMethodArrayArgumentsNode {
+
+        @Specialization
+        public int setpgid(int pid, int pgid) {
+            return posix().setpgid(pid, pgid);
+        }
+
+    }
+
+    @CoreMethod(names = "setpriority", isModuleFunction = true, required = 3, lowerFixnum = { 1, 2, 3 }, unsafe = UnsafeGroup.PROCESSES)
     public abstract static class SetPriorityNode extends CoreMethodArrayArgumentsNode {
 
         @Specialization
@@ -420,7 +422,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "setresuid", isModuleFunction = true, required = 3, lowerFixnumParameters = {0, 1, 2}, unsafe = UnsafeGroup.PROCESSES)
+    @CoreMethod(names = "setresuid", isModuleFunction = true, required = 3, lowerFixnum = { 1, 2, 3 }, unsafe = UnsafeGroup.PROCESSES)
     public abstract static class SetResuidNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -431,7 +433,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "seteuid", isModuleFunction = true, required = 1, lowerFixnumParameters = 0, unsafe = UnsafeGroup.PROCESSES)
+    @CoreMethod(names = "seteuid", isModuleFunction = true, required = 1, lowerFixnum = 1, unsafe = UnsafeGroup.PROCESSES)
     public abstract static class SetEuidNode extends CoreMethodArrayArgumentsNode {
 
         @Specialization
@@ -441,7 +443,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "setreuid", isModuleFunction = true, required = 2, lowerFixnumParameters = {0, 1}, unsafe = UnsafeGroup.PROCESSES)
+    @CoreMethod(names = "setreuid", isModuleFunction = true, required = 2, lowerFixnum = { 1, 2 }, unsafe = UnsafeGroup.PROCESSES)
     public abstract static class SetReuidNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -452,7 +454,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "setrlimit", isModuleFunction = true, required = 2, unsafe = UnsafeGroup.PROCESSES)
+    @CoreMethod(names = "setrlimit", isModuleFunction = true, required = 2, lowerFixnum = 1, unsafe = UnsafeGroup.PROCESSES)
     public abstract static class SetRLimitNode extends CoreMethodArrayArgumentsNode {
 
         @Specialization(guards = "isRubyPointer(pointer)")
@@ -470,7 +472,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "setruid", isModuleFunction = true, required = 1, lowerFixnumParameters = 0, unsafe = UnsafeGroup.PROCESSES)
+    @CoreMethod(names = "setruid", isModuleFunction = true, required = 1, lowerFixnum = 1, unsafe = UnsafeGroup.PROCESSES)
     public abstract static class SetRuidNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -481,7 +483,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "setuid", isModuleFunction = true, required = 1, lowerFixnumParameters = 0, unsafe = UnsafeGroup.PROCESSES)
+    @CoreMethod(names = "setuid", isModuleFunction = true, required = 1, lowerFixnum = 1, unsafe = UnsafeGroup.PROCESSES)
     public abstract static class SetUidNode extends CoreMethodArrayArgumentsNode {
 
         @Specialization
@@ -501,7 +503,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "flock", isModuleFunction = true, required = 2, lowerFixnumParameters = {0, 1}, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "flock", isModuleFunction = true, required = 2, lowerFixnum = { 1, 2 }, unsafe = UnsafeGroup.IO)
     public abstract static class FlockNode extends CoreMethodArrayArgumentsNode {
 
         @Specialization
@@ -511,7 +513,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "major", isModuleFunction = true, required = 1, lowerFixnumParameters = 0, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "major", isModuleFunction = true, required = 1, lowerFixnum = 1, unsafe = UnsafeGroup.IO)
     public abstract static class MajorNode extends CoreMethodArrayArgumentsNode {
 
         @Specialization
@@ -521,7 +523,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "minor", isModuleFunction = true, required = 1, lowerFixnumParameters = 0, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "minor", isModuleFunction = true, required = 1, lowerFixnum = 1, unsafe = UnsafeGroup.IO)
     public abstract static class MinorNode extends CoreMethodArrayArgumentsNode {
 
         @Specialization
@@ -553,7 +555,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "getcwd", isModuleFunction = true, required = 2, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "getcwd", isModuleFunction = true, unsafe = UnsafeGroup.IO)
     public abstract static class GetcwdNode extends CoreMethodArrayArgumentsNode {
 
         @Child private RopeNodes.MakeLeafRopeNode makeLeafRopeNode;
@@ -563,14 +565,15 @@ public abstract class TrufflePosixNodes {
             makeLeafRopeNode = RopeNodesFactory.MakeLeafRopeNodeGen.create(null, null, null, null);
         }
 
-        @CompilerDirectives.TruffleBoundary
-        @Specialization(guards = "isRubyString(resultPath)")
-        public DynamicObject getcwd(DynamicObject resultPath, int maxSize) {
-            // We just ignore maxSize - I think this is ok
+        @TruffleBoundary
+        @Specialization
+        public DynamicObject getcwd() {
+            final String cwd = posix().getcwd();
+            final String path = getContext().getCurrentDirectory();
+            assert path.equals(cwd);
 
-            final String path = getContext().getJRubyRuntime().getCurrentDirectory();
-            StringOperations.setRope(resultPath, makeLeafRopeNode.executeMake(path.getBytes(StandardCharsets.UTF_8), Layouts.STRING.getRope(resultPath).getEncoding(), CodeRange.CR_UNKNOWN, NotProvided.INSTANCE));
-            return resultPath;
+            // TODO (nirvdrum 12-Sept-16) The rope table always returns UTF-8, but this call should be based on Encoding.default_external and reflect updates to that value.
+            return StringOperations.createString(getContext(), getContext().getRopeTable().getRope(path));
         }
 
     }
@@ -585,7 +588,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "errno=", isModuleFunction = true, required = 1, unsafe = UnsafeGroup.PROCESSES)
+    @CoreMethod(names = "errno=", isModuleFunction = true, required = 1, lowerFixnum = 1, unsafe = UnsafeGroup.PROCESSES)
     public abstract static class ErrnoAssignNode extends CoreMethodArrayArgumentsNode {
 
         @Specialization
@@ -596,7 +599,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "fcntl", isModuleFunction = true, required = 3, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "fcntl", isModuleFunction = true, required = 3, lowerFixnum = {1, 2, 3}, unsafe = UnsafeGroup.IO)
     public abstract static class FcntlNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -613,7 +616,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "getpgid", isModuleFunction = true, required = 1, unsafe = UnsafeGroup.PROCESSES)
+    @CoreMethod(names = "getpgid", isModuleFunction = true, required = 1, lowerFixnum = 1, unsafe = UnsafeGroup.PROCESSES)
     public abstract static class GetpgidNode extends CoreMethodArrayArgumentsNode {
 
         @Specialization
@@ -633,7 +636,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "isatty", isModuleFunction = true, required = 1, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "isatty", isModuleFunction = true, required = 1, lowerFixnum = 1, unsafe = UnsafeGroup.IO)
     public abstract static class IsATTYNode extends CoreMethodArrayArgumentsNode {
 
         @Specialization
@@ -649,6 +652,17 @@ public abstract class TrufflePosixNodes {
         @Specialization
         public int getppid() {
             return posix().getppid();
+        }
+
+    }
+
+    @CoreMethod(names = "send", isModuleFunction = true, required = 4, lowerFixnum = {1, 3, 4}, unsafe = UnsafeGroup.IO)
+    public abstract static class SendNode extends CoreMethodArrayArgumentsNode {
+
+        @TruffleBoundary
+        @Specialization(guards = "isRubyPointer(buffer)")
+        public int send(int descriptor, DynamicObject buffer, int bytes, int flags) {
+            return nativeSockets().send(descriptor, Layouts.POINTER.getPointer(buffer), bytes, flags);
         }
 
     }
@@ -695,7 +709,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "_connect", isModuleFunction = true, required = 3, lowerFixnumParameters = {0, 2}, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "_connect", isModuleFunction = true, required = 3, lowerFixnum = { 1, 3 }, unsafe = UnsafeGroup.IO)
     public abstract static class ConnectNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -718,7 +732,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "_getnameinfo", isModuleFunction = true, required = 7, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "_getnameinfo", isModuleFunction = true, required = 7, lowerFixnum = {2, 4, 6, 7}, unsafe = UnsafeGroup.IO)
     public abstract static class GetNameInfoNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -771,7 +785,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "shutdown", isModuleFunction = true, required = 2, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "shutdown", isModuleFunction = true, required = 2, lowerFixnum = {1, 2}, unsafe = UnsafeGroup.IO)
     public abstract static class ShutdownNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -782,7 +796,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "socket", isModuleFunction = true, required = 3, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "socket", isModuleFunction = true, required = 3, lowerFixnum = {1, 2, 3}, unsafe = UnsafeGroup.IO)
     public abstract static class SocketNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -793,7 +807,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "setsockopt", isModuleFunction = true, required = 5, lowerFixnumParameters = {0, 1, 2, 4}, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "setsockopt", isModuleFunction = true, required = 5, lowerFixnum = { 1, 2, 3, 5 }, unsafe = UnsafeGroup.IO)
     public abstract static class SetSockOptNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -804,7 +818,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "_bind", isModuleFunction = true, required = 3, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "_bind", isModuleFunction = true, required = 3, lowerFixnum = {1, 3}, unsafe = UnsafeGroup.IO)
     public abstract static class BindNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -815,7 +829,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "listen", isModuleFunction = true, required = 2, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "listen", isModuleFunction = true, required = 2, lowerFixnum = {1, 2}, unsafe = UnsafeGroup.IO)
     public abstract static class ListenNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -826,7 +840,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "gethostname", isModuleFunction = true, required = 2, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "gethostname", isModuleFunction = true, required = 2, lowerFixnum = 2, unsafe = UnsafeGroup.IO)
     public abstract static class GetHostNameNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -837,7 +851,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "_getpeername", isModuleFunction = true, required = 3, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "_getpeername", isModuleFunction = true, required = 3, lowerFixnum = 1, unsafe = UnsafeGroup.IO)
     public abstract static class GetPeerNameNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -848,7 +862,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "_getsockname", isModuleFunction = true, required = 3, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "_getsockname", isModuleFunction = true, required = 3, lowerFixnum = 1, unsafe = UnsafeGroup.IO)
     public abstract static class GetSockNameNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -859,7 +873,7 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "_getsockopt", isModuleFunction = true, required = 5, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "_getsockopt", isModuleFunction = true, required = 5, lowerFixnum = {1, 2, 3}, unsafe = UnsafeGroup.IO)
     public abstract static class GetSockOptNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
@@ -885,13 +899,41 @@ public abstract class TrufflePosixNodes {
 
     }
 
-    @CoreMethod(names = "close", isModuleFunction = true, required = 1, unsafe = UnsafeGroup.IO)
+    @CoreMethod(names = "close", isModuleFunction = true, required = 1, lowerFixnum = 1, unsafe = UnsafeGroup.IO)
     public abstract static class CloseNode extends CoreMethodArrayArgumentsNode {
 
         @CompilerDirectives.TruffleBoundary
         @Specialization
         public int close(int file) {
             return posix().close(file);
+        }
+
+    }
+
+    @CoreMethod(names = "kill", isModuleFunction = true, unsafe = { UnsafeGroup.PROCESSES, UnsafeGroup.SIGNALS }, required = 3)
+    public abstract static class KillNode extends CoreMethodArrayArgumentsNode {
+
+        @TruffleBoundary
+        @Specialization(guards = "isRubyString(signalName)")
+        public int kill(int pid, int signalNumber, DynamicObject signalName) {
+            int self = posix().getpid();
+
+            if (self == pid) {
+                Signal signal = getContext().getNativePlatform().getSignalManager().createSignal(StringOperations.getString(signalName));
+                return raise(signal);
+            } else {
+                return posix().kill(pid, signalNumber);
+            }
+        }
+
+        @TruffleBoundary
+        private int raise(Signal signal) {
+            try {
+                getContext().getNativePlatform().getSignalManager().raise(signal);
+            } catch (IllegalArgumentException e) {
+                throw new RaiseException(coreExceptions().argumentError(e.getMessage(), this));
+            }
+            return 1;
         }
 
     }

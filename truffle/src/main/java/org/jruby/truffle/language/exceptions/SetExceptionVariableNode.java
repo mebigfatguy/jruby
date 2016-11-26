@@ -48,9 +48,14 @@ public class SetExceptionVariableNode extends Node {
         }
     }
 
+    public void setLastException(VirtualFrame frame, DynamicObject exception) {
+        final DynamicObject threadLocals = getThreadLocalsObject(frame);
+        writeDollarBang(threadLocals, exception);
+    }
+
     private DynamicObject getThreadLocalsObject(VirtualFrame frame) {
         if (threadLocalNode == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             threadLocalNode = insert(ThreadLocalObjectNodeGen.create(context, getEncapsulatingSourceSection()));
         }
 
@@ -59,7 +64,7 @@ public class SetExceptionVariableNode extends Node {
 
     private void writeDollarBang(DynamicObject threadLocals, Object value) {
         if (writeDollarBang == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             writeDollarBang = insert(WriteObjectFieldNodeGen.create("$!"));
         }
 
@@ -68,7 +73,7 @@ public class SetExceptionVariableNode extends Node {
 
     private Object readDollarBang(DynamicObject threadLocals) {
         if (readDollarBang == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             readDollarBang = insert(ReadObjectFieldNodeGen.create("$!", context.getCoreLibrary().getNilObject()));
         }
 

@@ -7,6 +7,7 @@ import org.jruby.RubyInstanceConfig;
 import org.jruby.ast.*;
 import org.jruby.ast.types.INameNode;
 import org.jruby.compiler.NotCompilableException;
+import org.jruby.lexer.yacc.ISourcePosition;
 import org.jruby.runtime.ArgumentDescriptor;
 import org.jruby.runtime.ArgumentType;
 import org.jruby.ir.instructions.*;
@@ -370,13 +371,13 @@ public class IRBuilder {
         if (node.isNewline()) {
             int currLineNum = node.getLine();
             if (currLineNum != _lastProcessedLineNum) { // Do not emit multiple line number instrs for the same line
+                addInstr(manager.newLineNumber(currLineNum));
                 if (RubyInstanceConfig.FULL_TRACE_ENABLED) {
                     addInstr(new TraceInstr(RubyEvent.LINE, methodNameFor(), getFileName(), currLineNum));
                     if (needsCodeCoverage()) {
                         addInstr(new TraceInstr(RubyEvent.COVERAGE, methodNameFor(), getFileName(), currLineNum));
                     }
                 }
-                addInstr(manager.newLineNumber(currLineNum));
                 _lastProcessedLineNum = currLineNum;
             }
         }
@@ -611,7 +612,7 @@ public class IRBuilder {
         switch (args.getNodeType()) {
             case ARGSCATNODE:
             case ARGSPUSHNODE:
-                return new Operand[] { new Splat(build(args)) };
+                return new Operand[] { new Splat(addResultInstr(new BuildSplatInstr(createTemporaryVariable(), build(args), false))) };
             case ARRAYNODE: {
                 Node[] children = ((ListNode) args).children();
                 int numberOfArgs = children.length;
@@ -624,7 +625,7 @@ public class IRBuilder {
                 return builtArgs;
             }
             case SPLATNODE:
-                return new Operand[] { new Splat(buildSplat((SplatNode)args)) };
+                return new Operand[] { new Splat(addResultInstr(new BuildSplatInstr(createTemporaryVariable(), build(args), false))) };
         }
 
         throw new NotCompilableException("Invalid node for call args: " + args.getClass().getSimpleName() + ":" +
@@ -959,10 +960,6 @@ public class IRBuilder {
         Variable exc = createTemporaryVariable();
         addInstr(new ReceiveJRubyExceptionInstr(exc));
 
-        if (RubyInstanceConfig.FULL_TRACE_ENABLED) {
-            addInstr(new TraceInstr(RubyEvent.RETURN, getName(), getFileName(), -1));
-        }
-
         // Handle break using runtime helper
         // --> IRRuntimeHelpers.handleNonlocalReturn(scope, bj, blockType)
         Variable ret = createTemporaryVariable();
@@ -1035,7 +1032,8 @@ public class IRBuilder {
                 callNode.getArgsNode() instanceof ArrayNode &&
                 (argsAry = (ArrayNode) callNode.getArgsNode()).size() == 1 &&
                 argsAry.get(0) instanceof StrNode &&
-                !scope.maybeUsingRefinements()) {
+                !scope.maybeUsingRefinements() &&
+                callNode.getIterNode() == null) {
             StrNode keyNode = (StrNode) argsAry.get(0);
             addInstr(ArrayDerefInstr.create(callResult, receiver, new FrozenString(keyNode.getValue(), keyNode.getCodeRange(), keyNode.getPosition().getFile(), keyNode.getLine())));
             return callResult;
@@ -1072,6 +1070,27 @@ public class IRBuilder {
     }
 
     public Operand buildCase(CaseNode caseNode) {
+        // scan all cases to see if we have a homogeneous literal case/when
+        NodeType seenType = null;
+        for (Node aCase : caseNode.getCases().children()) {
+            WhenNode whenNode = (WhenNode)aCase;
+            NodeType exprNodeType = whenNode.getExpressionNodes().getNodeType();
+
+            if (seenType == null) {
+                seenType = exprNodeType;
+            } else if (seenType != exprNodeType) {
+                seenType = null;
+                break;
+            }
+        }
+
+        if (seenType != null) {
+            switch (seenType) {
+                case FIXNUMNODE:
+                    return buildFixnumCase(caseNode);
+            }
+        }
+
         // get the incoming case value
         Operand value = build(caseNode.getCaseNode());
 
@@ -1124,6 +1143,149 @@ public class IRBuilder {
                     v2 = build(whenNode.getExpressionNodes());
                 }
             } else {
+                Operand expression = buildWithOrder(whenNode.getExpressionNodes(), whenNode.containsVariableAssignment());
+                Node exprNodes = whenNode.getExpressionNodes();
+                boolean needsSplat = exprNodes instanceof ArgsPushNode || exprNodes instanceof SplatNode || exprNodes instanceof ArgsCatNode;
+
+                addInstr(new EQQInstr(eqqResult, expression, value, needsSplat));
+                v1 = eqqResult;
+                v2 = manager.getTrue();
+            }
+            addInstr(BEQInstr.create(v1, v2, bodyLabel));
+
+            // SSS FIXME: This doesn't preserve original order of when clauses.  We could consider
+            // preserving the order (or maybe not, since we would have to sort the constants first
+            // in any case) for outputting jump tables in certain situations.
+            //
+            // add body to map for emitting later
+            bodies.put(bodyLabel, whenNode.getBodyNode());
+        }
+
+        // Jump to else in case nothing matches!
+        addInstr(new JumpInstr(elseLabel));
+
+        // Build "else" if it exists
+        if (hasElse) {
+            labels.add(elseLabel);
+            bodies.put(elseLabel, caseNode.getElseNode());
+        }
+
+        // Now, emit bodies while preserving when clauses order
+        for (Label whenLabel: labels) {
+            addInstr(new LabelInstr(whenLabel));
+            Operand bodyValue = build(bodies.get(whenLabel));
+            // bodyValue can be null if the body ends with a return!
+            if (bodyValue != null) {
+                // SSS FIXME: Do local optimization of break results (followed by a copy & jump) to short-circuit the jump right away
+                // rather than wait to do it during an optimization pass when a dead jump needs to be removed.  For this, you have
+                // to look at what the last generated instruction was.
+                addInstr(new CopyInstr(result, bodyValue));
+                addInstr(new JumpInstr(endLabel));
+            }
+        }
+
+        if (!hasElse) {
+            addInstr(new LabelInstr(elseLabel));
+            addInstr(new CopyInstr(result, manager.getNil()));
+            addInstr(new JumpInstr(endLabel));
+        }
+
+        // Close it out
+        addInstr(new LabelInstr(endLabel));
+
+        return result;
+    }
+
+    private Operand buildFixnumCase(CaseNode caseNode) {
+        Map<Integer, Label> jumpTable = new HashMap<>();
+        Map<Node, Label> nodeBodies = new HashMap<>();
+
+        // gather fixnum-when bodies or bail
+        for (Node aCase : caseNode.getCases().children()) {
+            WhenNode whenNode = (WhenNode) aCase;
+            Label bodyLabel = getNewLabel();
+
+            FixnumNode expr = (FixnumNode) whenNode.getExpressionNodes();
+            long exprLong = expr.getValue();
+            if (exprLong > Integer.MAX_VALUE) throw new NotCompilableException("optimized fixnum case has long-ranged when at " + caseNode.getPosition());
+
+            if (jumpTable.get((int) exprLong) == null) {
+                jumpTable.put((int) exprLong, bodyLabel);
+            }
+
+            nodeBodies.put(whenNode, bodyLabel);
+        }
+
+        // sort the jump table
+        Map.Entry<Integer, Label>[] jumpEntries = jumpTable.entrySet().toArray(new Map.Entry[jumpTable.size()]);
+        Arrays.sort(jumpEntries, new Comparator<Map.Entry<Integer, Label>>() {
+            @Override
+            public int compare(Map.Entry<Integer, Label> o1, Map.Entry<Integer, Label> o2) {
+                return Integer.compare(o1.getKey(), o2.getKey());
+            }
+        });
+
+        // build a switch
+        int[] jumps = new int[jumpTable.size()];
+        Label[] targets = new Label[jumps.length];
+        int i = 0;
+        for (Map.Entry<Integer, Label> jumpEntry : jumpEntries) {
+            jumps[i] = jumpEntry.getKey();
+            targets[i] = jumpEntry.getValue();
+            i++;
+        }
+
+        // get the incoming case value
+        Operand value = build(caseNode.getCaseNode());
+
+        Label     eqqPath   = getNewLabel();
+        Label     endLabel  = getNewLabel();
+        boolean   hasElse   = (caseNode.getElseNode() != null);
+        Label     elseLabel = getNewLabel();
+        Variable  result    = createTemporaryVariable();
+
+        // insert fast switch with fallback to eqq
+        addInstr(new BSwitchInstr(jumps, value, eqqPath, targets, elseLabel));
+        addInstr(new LabelInstr(eqqPath));
+
+        List<Label> labels = new ArrayList<>();
+        Map<Label, Node> bodies = new HashMap<>();
+
+        // build each "when"
+        for (Node aCase : caseNode.getCases().children()) {
+            WhenNode whenNode = (WhenNode)aCase;
+            Label bodyLabel = nodeBodies.get(whenNode);
+            if (bodyLabel == null) bodyLabel = getNewLabel();
+
+            Variable eqqResult = createTemporaryVariable();
+            labels.add(bodyLabel);
+            Operand v1, v2;
+            if (whenNode.getExpressionNodes() instanceof ListNode
+                    // DNode produces a proper result, so we don't want the special ListNode handling below
+                    // FIXME: This is obviously gross, and we need a better way to filter out non-expression ListNode here
+                    // See GH #2423
+                    && !(whenNode.getExpressionNodes() instanceof DNode)) {
+                // Note about refactoring:
+                // - BEQInstr has a quick implementation when the second operand is a boolean literal
+                //   If it can be fixed to do this even on the first operand, we can switch around
+                //   v1 and v2 in the UndefinedValue scenario and DRY out this code.
+                // - Even with this asymmetric implementation of BEQInstr, you might be tempted to
+                //   switch around v1 and v2 in the else case.  But, that is equivalent to this Ruby code change:
+                //      (v1 == value) instead of (value == v1)
+                //   It seems that they should be identical, but the first one is v1.==(value) and the second one is
+                //   value.==(v1).  This is just fine *if* the Ruby programmer has implemented an algebraically
+                //   symmetric "==" method on those objects.  If not, then, the results might be unexpected where the
+                //   code (intentionally or otherwise) relies on this asymmetry of "==".  While it could be argued
+                //   that this a Ruby code bug, we will just try to preserve the order of the == check as it appears
+                //   in the Ruby code.
+                if (value == UndefinedValue.UNDEFINED)  {
+                    v1 = build(whenNode.getExpressionNodes());
+                    v2 = manager.getTrue();
+                } else {
+                    v1 = value;
+                    v2 = build(whenNode.getExpressionNodes());
+                }
+            } else {
                 Operand expression = build(whenNode.getExpressionNodes());
 
                 // use frozen string for direct literal strings in `when`
@@ -1131,7 +1293,7 @@ public class IRBuilder {
                     expression = ((StringLiteral) expression).frozenString;
                 }
 
-                addInstr(new EQQInstr(eqqResult, expression, value));
+                addInstr(new EQQInstr(eqqResult, expression, value, true));
                 v1 = eqqResult;
                 v2 = manager.getTrue();
             }
@@ -1442,30 +1604,7 @@ public class IRBuilder {
         case TRUENODE:
             return new FrozenString("true");
         case DREGEXPNODE: case DSTRNODE: {
-            final Node dNode = node;
-
-            // protected code
-            CodeBlock protectedCode = new CodeBlock() {
-                public Operand run() {
-                    build(dNode);
-                    // always an expression as long as we get through here without an exception!
-                    return new FrozenString("expression");
-                }
-            };
-            // rescue block
-            CodeBlock rescueBlock = new CodeBlock() {
-                public Operand run() { return manager.getNil(); } // Nothing to do if we got an exception
-            };
-
-            // Try verifying definition, and if we get an JumpException exception, process it with the rescue block above
-            Operand v = protectCodeWithRescue(protectedCode, rescueBlock);
-            Label doneLabel = getNewLabel();
-            Variable tmpVar = getValueInTemporaryVariable(v);
-            addInstr(BNEInstr.create(doneLabel, tmpVar, manager.getNil()));
-            addInstr(new CopyInstr(tmpVar, new FrozenString("expression")));
-            addInstr(new LabelInstr(doneLabel));
-
-            return tmpVar;
+            return new FrozenString("expression");
         }
         case ARRAYNODE: { // If all elts of array are defined the array is as well
             ArrayNode array = (ArrayNode) node;
@@ -1549,12 +1688,24 @@ public class IRBuilder {
 
             CodeBlock protectedCode = new CodeBlock() {
                 public Operand run() {
-                    Operand v = colon instanceof Colon2Node ?
-                            build(((Colon2Node)colon).getLeftNode()) : new ObjectClass();
+                    if (!(colon instanceof Colon2Node)) { // colon3 (weird inheritance)
+                        return addResultInstr(new RuntimeHelperCall(createTemporaryVariable(),
+                                IS_DEFINED_CONSTANT_OR_METHOD, new Operand[] {new ObjectClass(), new FrozenString(name)}));
+                    }
 
-                    Variable tmpVar = createTemporaryVariable();
-                    addInstr(new RuntimeHelperCall(tmpVar, IS_DEFINED_CONSTANT_OR_METHOD, new Operand[] {v, new FrozenString(name)}));
-                    return tmpVar;
+                    Label bad = getNewLabel();
+                    Label done = getNewLabel();
+                    Variable result = createTemporaryVariable();
+                    Operand test = buildGetDefinition(((Colon2Node) colon).getLeftNode());
+                    addInstr(BEQInstr.create(test, manager.getNil(), bad));
+                    Operand lhs = build(((Colon2Node) colon).getLeftNode());
+                    addInstr(new RuntimeHelperCall(result, IS_DEFINED_CONSTANT_OR_METHOD, new Operand[] {lhs, new FrozenString(name)}));
+                    addInstr(new JumpInstr(done));
+                    addInstr(new LabelInstr(bad));
+                    addInstr(new CopyInstr(result, manager.getNil()));
+                    addInstr(new LabelInstr(done));
+
+                    return result;
                 }
             };
 
@@ -1749,6 +1900,8 @@ public class IRBuilder {
         this.needsCodeCoverage = needsCodeCoverage;
 
         if (RubyInstanceConfig.FULL_TRACE_ENABLED) {
+            // Explicit line number here because we need a line number for trace before we process any nodes
+            addInstr(manager.newLineNumber(scope.getLineNumber()));
             addInstr(new TraceInstr(RubyEvent.CALL, getName(), getFileName(), scope.getLineNumber()));
         }
 
@@ -1769,7 +1922,8 @@ public class IRBuilder {
         Operand rv = build(defNode.getBodyNode());
 
         if (RubyInstanceConfig.FULL_TRACE_ENABLED) {
-            addInstr(new TraceInstr(RubyEvent.RETURN, getName(), getFileName(), -1));
+            addInstr(new LineNumberInstr(defNode.getEndLine()));
+            addInstr(new TraceInstr(RubyEvent.RETURN, getName(), getFileName(), defNode.getEndLine()));
         }
 
         if (rv != null) addInstr(new ReturnInstr(rv));
@@ -1896,20 +2050,22 @@ public class IRBuilder {
         if (opt > 0) {
             int optIndex = argsNode.getOptArgIndex();
             for (int j = 0; j < opt; j++, argIndex++) {
-                // Jump to 'l' if this arg is not null.  If null, fall through and build the default value!
-                Label l = getNewLabel();
-                OptArgNode n = (OptArgNode)args[optIndex + j];
-                String argName = n.getName();
-                Variable av = getNewLocalVariable(argName, 0);
+                // We fall through or jump to variableAssigned once we know we have a valid value in place.
+                Label variableAssigned = getNewLabel();
+                OptArgNode optArg = (OptArgNode)args[optIndex + j];
+                String argName = optArg.getName();
+                Variable argVar = getNewLocalVariable(argName, 0);
                 if (scope instanceof IRMethod) addArgumentDescription(ArgumentType.opt, argName);
-                Variable temp = createTemporaryVariable();
                 // You need at least required+j+1 incoming args for this opt arg to get an arg at all
-                addInstr(new ReceiveOptArgInstr(av, signature.required(), signature.pre(), j));
-                addInstr(BNEInstr.create(l, av, UndefinedValue.UNDEFINED)); // if 'av' is not undefined, go to default
-                addInstr(new CopyInstr(av, buildNil())); // wipe out undefined value with nil
-                Operand defaultResult = build(n.getValue());
-                addInstr(new CopyInstr(av, defaultResult));
-                addInstr(new LabelInstr(l));
+                addInstr(new ReceiveOptArgInstr(argVar, signature.required(), signature.pre(), j));
+                addInstr(BNEInstr.create(variableAssigned, argVar, UndefinedValue.UNDEFINED));
+                // We add this extra nil copy because we do not know if we have a circular defininition of
+                // argVar: proc { |a=a| } or proc { |a = foo(bar(a))| }.
+                addInstr(new CopyInstr(argVar, manager.getNil()));
+                // This bare build looks weird but OptArgNode is just a marker and value is either a LAsgnNode
+                // or a DAsgnNode.  So building the value will end up having a copy(var, assignment).
+                build(optArg.getValue());
+                addInstr(new LabelInstr(variableAssigned));
             }
         }
 
@@ -2182,7 +2338,7 @@ public class IRBuilder {
     }
 
     private Operand dynamicPiece(Node pieceNode) {
-        Operand piece = build(pieceNode);
+        Operand piece = pieceNode instanceof StrNode ? buildStrRaw((StrNode) pieceNode) : build(pieceNode);
 
         if (piece instanceof StringLiteral) {
             piece = ((StringLiteral)piece).frozenString;
@@ -2704,10 +2860,10 @@ public class IRBuilder {
 
     private InterpreterContext buildIterInner(IterNode iterNode) {
         prepareImplicitState();                                    // recv_self, add frame block, etc)
+        addCurrentScopeAndModule();                                // %current_scope/%current_module
 
         if (iterNode.getVarNode().getNodeType() != null) receiveBlockArgs(iterNode);
 
-        addCurrentScopeAndModule();                                // %current_scope/%current_module
         addInstr(new LabelInstr(((IRClosure) scope).startLabel));  // start label -- used by redo!
 
         // Build closure body and return the result of the closure
@@ -3193,10 +3349,16 @@ public class IRBuilder {
         if (RubyInstanceConfig.FULL_TRACE_ENABLED || !(rescueNode instanceof RescueModNode) &&
                 rescueNode.getElseNode() != null) return false;
 
+        Node body = rescueNode.getRescueNode().getBodyNode();
+
+        // This optimization omits backtrace info for the exception getting rescued so we cannot
+        // optimize the exception variable.
+        if (body instanceof GlobalVarNode && ((GlobalVarNode) body).getName().equals("$!")) return false;
+
         // FIXME: This MIGHT be able to expand to more complicated expressions like Hash or Array if they
         // contain only SideEffectFree nodes.  Constructing a literal out of these should be safe from
         // effecting or being able to access $!.
-        return rescueNode.getRescueNode().getBodyNode() instanceof SideEffectFree;
+        return body instanceof SideEffectFree;
     }
 
     private Operand buildRescueInternal(RescueNode rescueNode, EnsureBlockInfo ensure) {
@@ -3392,6 +3554,11 @@ public class IRBuilder {
             if (sm != null) addInstr(new NonlocalReturnInstr(retVal, sm.getName()));
         } else {
             retVal = processEnsureRescueBlocks(retVal);
+
+            if (RubyInstanceConfig.FULL_TRACE_ENABLED) {
+                addInstr(new TraceInstr(RubyEvent.RETURN, getName(), getFileName(), returnNode.getLine()));
+            }
+
             addInstr(new ReturnInstr(retVal));
         }
 
@@ -3441,19 +3608,23 @@ public class IRBuilder {
     }
 
     public Operand buildSplat(SplatNode splatNode) {
-        return addResultInstr(new BuildSplatInstr(createTemporaryVariable(), build(splatNode.getValue())));
+        return addResultInstr(new BuildSplatInstr(createTemporaryVariable(), build(splatNode.getValue()), true));
     }
 
     public Operand buildStr(StrNode strNode) {
+        Operand literal = buildStrRaw(strNode);
+
+        return literal instanceof FrozenString ? literal : copyAndReturnValue(literal);
+    }
+
+    public Operand buildStrRaw(StrNode strNode) {
         if (strNode instanceof FileNode) return new Filename();
 
-        Operand literal = strNode.isFrozen() ?
-                new FrozenString(strNode.getValue(), strNode.getCodeRange(), strNode.getPosition().getFile(), strNode.getPosition().getLine()) :
-                new StringLiteral(strNode.getValue(), strNode.getCodeRange(), strNode.getPosition().getFile(), strNode.getPosition().getLine());
+        ISourcePosition pos = strNode.getPosition();
 
-        Operand result = copyAndReturnValue(literal);
+        if (strNode.isFrozen()) return new FrozenString(strNode.getValue(), strNode.getCodeRange(), pos.getFile(), pos.getLine());
 
-        return result;
+        return new StringLiteral(strNode.getValue(), strNode.getCodeRange(), pos.getFile(), pos.getLine());
     }
 
     private Operand buildSuperInstr(Operand block, Operand[] args) {
@@ -3716,6 +3887,10 @@ public class IRBuilder {
         Operand bodyReturnValue = build(bodyNode);
 
         if (RubyInstanceConfig.FULL_TRACE_ENABLED) {
+            // FIXME: We also should add a line number instruction so that backtraces
+            // inside the trace function get the correct line. Unfortunately, we don't
+            // have one here and we can't do it dynamically like TraceInstr does.
+            // See https://github.com/jruby/jruby/issues/4051
             addInstr(new TraceInstr(RubyEvent.END, null, getFileName(), -1));
         }
 

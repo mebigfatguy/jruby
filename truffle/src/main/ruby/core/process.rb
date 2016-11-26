@@ -126,7 +126,6 @@ module Process
   #
   def self.setproctitle(title)
     val = Rubinius::Type.coerce_to(title, String, :to_str)
-
     Truffle.invoke_primitive(:vm_set_process_title, val)
   end
 
@@ -165,37 +164,7 @@ module Process
   end
 
   def self.fork
-    pid = Rubinius::Mirror::Process.fork
-
-    if block_given? and pid.nil?
-      begin
-        yield nil
-        status = 0
-      rescue SystemExit => e
-        status = e.status
-      rescue Exception => e
-        e.render "An exception occurred in a forked block"
-        status = 1
-      end
-
-      until Rubinius::AtExit.empty?
-        begin
-          Rubinius::AtExit.shift.call
-        rescue SystemExit => e
-          status = e.status
-        end
-      end
-
-      ObjectSpace.run_finalizers
-
-      # Do not use Kernel.exit. This raises a SystemExit exception, which
-      # will run ensure blocks. This is not what MRI does and causes bugs
-      # in programs. See issue http://github.com/rubinius/rubinius/issues#issue/289 for
-      # an example
-
-      Kernel.exit! status
-    end
-    pid
+    raise 'unsupported'
   end
 
   def self.times
@@ -228,16 +197,18 @@ module Process
       use_process_group = true
     end
 
+    signal_name = Signal::Numbers[signal]
+
     pids.each do |pid|
-      pid = Rubinius::Type.coerce_to_pid pid
+      pid = Rubinius::Type.coerce_to pid, Integer, :to_int
 
       pid = -pid if use_process_group
-      result = Truffle::POSIX.kill(pid, signal)
+      result = Truffle::POSIX.kill(pid, signal, signal_name)
 
       Errno.handle if result == -1
     end
 
-    return pids.length
+    pids.length
   end
 
   def self.abort(msg=nil)
@@ -278,12 +249,6 @@ module Process
   end
   def self.getpgrp
     ret = Truffle::POSIX.getpgrp
-    Errno.handle if ret == -1
-    ret
-  end
-
-  def self.pid
-    ret = Truffle::POSIX.getpid
     Errno.handle if ret == -1
     ret
   end
@@ -388,7 +353,6 @@ module Process
     kind = Rubinius::Type.coerce_to kind, Integer, :to_int
     id =   Rubinius::Type.coerce_to id, Integer, :to_int
 
-    Truffle::POSIX.errno = 0
     ret = Truffle::POSIX.getpriority(kind, id)
     Errno.handle
     ret
@@ -900,3 +864,5 @@ module Process
     end
   end
 end
+
+$$ = Process.pid

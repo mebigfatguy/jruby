@@ -12,10 +12,8 @@ package org.jruby.truffle.core.encoding;
 import com.oracle.truffle.api.object.DynamicObject;
 import com.oracle.truffle.api.object.DynamicObjectFactory;
 import com.oracle.truffle.api.object.dsl.Layout;
-import com.oracle.truffle.api.object.dsl.Nullable;
 import org.jcodings.Encoding;
 import org.jruby.truffle.core.basicobject.BasicObjectLayout;
-import org.jruby.util.ByteList;
 
 @Layout
 public interface EncodingLayout extends BasicObjectLayout {
@@ -24,17 +22,16 @@ public interface EncodingLayout extends BasicObjectLayout {
                                              DynamicObject metaClass);
 
     DynamicObject createEncoding(DynamicObjectFactory factory,
-                                 @Nullable Encoding encoding,
-                                 ByteList name,
+                                 Encoding encoding,
+                                 DynamicObject name,
                                  boolean dummy);
 
     boolean isEncoding(DynamicObject object);
     boolean isEncoding(Object object);
 
     Encoding getEncoding(DynamicObject object);
-    void setEncoding(DynamicObject object, Encoding value);
 
-    ByteList getName(DynamicObject object);
+    DynamicObject getName(DynamicObject object);
 
     boolean getDummy(DynamicObject object);
 

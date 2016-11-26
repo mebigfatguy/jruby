@@ -188,6 +188,7 @@ declare -a ruby_args
 mode=""
 
 JAVA_CLASS_JRUBY_MAIN=org.jruby.Main
+JAVA_CLASS_JRUBY_TRUFFLE_MAIN=org.jruby.truffle.Main
 java_class=$JAVA_CLASS_JRUBY_MAIN
 JAVA_CLASS_NGSERVER=org.jruby.main.NailServerMain
 
@@ -243,10 +244,15 @@ do
      # Pass -X... and -X? search options through
      -X*\.\.\.|-X*\?)
         ruby_args=("${ruby_args[@]}" "$1") ;;
+     -Xclassic)
+        unset USING_TRUFFLE
+        ;;
      -X+T)
-        JRUBY_CP="$JRUBY_CP$CP_DELIMITER$JRUBY_HOME/lib/jruby-truffle.jar"
-        ruby_args=("${ruby_args[@]}" "-X+T")
         USING_TRUFFLE="true"
+        ;;
+     -X+TM)
+        USING_TRUFFLE="true"
+        java_class=$JAVA_CLASS_JRUBY_TRUFFLE_MAIN
         ;;
      # Match -Xa.b.c=d to translate to -Da.b.c=d as a java option
      -X*)
@@ -296,6 +302,8 @@ do
         # Start up as Nailgun server
         java_class=$JAVA_CLASS_NGSERVER
         VERIFY_JRUBY=true ;;
+     --no-bootclasspath)
+        NO_BOOTCLASSPATH=true ;;
      --ng)
         # Use native Nailgun client to toss commands to server
         process_special_opts "--ng" ;;
@@ -314,6 +322,11 @@ do
     esac
     shift
 done
+
+if [[ "$USING_TRUFFLE" != "" ]]; then
+   JRUBY_CP="$JRUBY_CP$CP_DELIMITER$JRUBY_HOME/lib/jruby-truffle.jar"
+   ruby_args=("-X+T" "${ruby_args[@]}")
+fi
 
 # Force file.encoding to UTF-8 when on Mac, since Apple JDK defaults to MacRoman (JRUBY-3576)
 if [[ $darwin && -z "$JAVA_ENCODING" ]]; then
@@ -357,7 +370,7 @@ if [ "$nailgun_client" != "" ]; then
     exit 1
   fi
 else
-if [[ "$VERIFY_JRUBY" != "" && -z "$USING_TRUFFLE" ]]; then
+if [[ "$NO_BOOTCLASSPATH" != "" || ("$VERIFY_JRUBY" != "" && -z "$USING_TRUFFLE") ]]; then
   if [ "$PROFILE_ARGS" != "" ]; then
       echo "Running with instrumented profiler"
   fi

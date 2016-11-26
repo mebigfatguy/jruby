@@ -64,19 +64,26 @@ describe "Predefined global $~" do
     def obj.foo; yield; end
     def obj.foo2(&proc); proc.call; end
 
-    match = /foo/.match "foo"
+    match2 = nil
+    match3 = nil
+    match4 = nil
 
-    obj.foo { match = /bar/.match("bar") }
+    match1 = /foo/.match "foo"
 
-    $~.should == match
+    obj.foo { match2 = /bar/.match("bar") }
 
-    eval 'match = /baz/.match("baz")'
+    match2.should_not == nil
+    $~.should == match2
 
-    $~.should == match
+    eval 'match3 = /baz/.match("baz")'
 
-    obj.foo2 { match = /qux/.match("qux") }
+    match3.should_not == nil
+    $~.should == match3
 
-    $~.should == match
+    obj.foo2 { match4 = /qux/.match("qux") }
+
+    match4.should_not == nil
+    $~.should == match4
   end
 
   it "raises an error if assigned an object not nil or instanceof MatchData" do
@@ -832,7 +839,7 @@ describe "Global variable $?" do
   end
 
   it "is thread-local" do
-    system("#{RUBY_EXE} -e 'exit 0'")
+    system(ruby_cmd('exit 0'))
     Thread.new { $?.should be_nil }.join
   end
 end
@@ -904,6 +911,13 @@ describe "Global variable $0" do
 
   after :each do
     $0 = @orig_program_name
+  end
+
+  it "is the path given as the main script and the same as __FILE__" do
+    script = "fixtures/dollar_zero.rb"
+    Dir.chdir(File.dirname(__FILE__)) do
+      ruby_exe(script).should == "#{script}\n#{script}\nOK"
+    end
   end
 
   it "returns the program name" do

@@ -29,6 +29,7 @@ import org.jruby.truffle.language.dispatch.DispatchHeadNodeFactory;
 import org.jruby.truffle.language.dispatch.MissingBehavior;
 import org.jruby.truffle.language.objects.IsTaintedNode;
 import org.jruby.truffle.language.objects.IsTaintedNodeGen;
+import org.jruby.truffle.util.DoubleUtils;
 
 import java.nio.charset.StandardCharsets;
 
@@ -82,7 +83,7 @@ public abstract class ToStringNode extends FormatNode {
     @TruffleBoundary
     @Specialization(guards = "convertNumbersToStrings")
     public byte[] toString(double value) {
-        return Double.toString(value).getBytes(StandardCharsets.US_ASCII);
+        return DoubleUtils.toString(value).getBytes(StandardCharsets.US_ASCII);
     }
 
     @Specialization(guards = "isRubyString(string)")
@@ -97,12 +98,12 @@ public abstract class ToStringNode extends FormatNode {
     @Specialization(guards = "isRubyArray(array)")
     public byte[] toString(VirtualFrame frame, DynamicObject array) {
         if (toSNode == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             toSNode = insert(DispatchHeadNodeFactory.createMethodCall(getContext(), true,
                     MissingBehavior.RETURN_MISSING));
         }
 
-        final Object value = toSNode.call(frame, array, "to_s", null);
+        final Object value = toSNode.call(frame, array, "to_s");
 
         if (RubyGuards.isRubyString(value)) {
             if (taintedProfile.profile(isTaintedNode.executeIsTainted(value))) {
@@ -118,12 +119,12 @@ public abstract class ToStringNode extends FormatNode {
     @Specialization(guards = {"!isRubyString(object)", "!isRubyArray(object)"})
     public byte[] toString(VirtualFrame frame, Object object) {
         if (toStrNode == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             toStrNode = insert(DispatchHeadNodeFactory.createMethodCall(getContext(), true,
                     MissingBehavior.RETURN_MISSING));
         }
 
-        final Object value = toStrNode.call(frame, object, conversionMethod, null);
+        final Object value = toStrNode.call(frame, object, conversionMethod);
 
         if (RubyGuards.isRubyString(value)) {
             if (taintedProfile.profile(isTaintedNode.executeIsTainted(value))) {
@@ -135,12 +136,11 @@ public abstract class ToStringNode extends FormatNode {
 
         if (inspectOnConversionFailure) {
             if (inspectNode == null) {
-                CompilerDirectives.transferToInterpreter();
-                inspectNode = insert(KernelNodesFactory.ToSNodeFactory.create(getContext(),
-                        getEncapsulatingSourceSection(), null));
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                inspectNode = insert(KernelNodesFactory.ToSNodeFactory.create(getContext(), null, null));
             }
 
-            return Layouts.STRING.getRope(inspectNode.toS(frame, object)).getBytes();
+            return Layouts.STRING.getRope(inspectNode.toS(object)).getBytes();
         } else {
             throw new NoImplicitConversionException(object, "String");
         }

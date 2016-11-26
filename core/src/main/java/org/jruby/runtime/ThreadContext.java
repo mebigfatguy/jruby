@@ -59,12 +59,12 @@ import org.jruby.runtime.profile.ProfileCollection;
 import org.jruby.runtime.scope.ManyVarsDynamicScope;
 import org.jruby.util.RecursiveComparator;
 import org.jruby.util.RubyDateFormatter;
+import org.jruby.util.cli.Options;
 import org.jruby.util.log.Logger;
 import org.jruby.util.log.LoggerFactory;
 
 import java.lang.ref.WeakReference;
 import java.security.SecureRandom;
-import java.util.Arrays;
 import java.util.Locale;
 import java.util.Set;
 
@@ -140,24 +140,40 @@ public final class ThreadContext {
     @Deprecated
     public transient SecureRandom secureRandom;
 
+    private static boolean tryPreferredPRNG = true;
     private static boolean trySHA1PRNG = true;
 
-    @SuppressWarnings("deprecated")
+    public final JavaSites sites;
+
+    @SuppressWarnings("deprecation")
     public SecureRandom getSecureRandom() {
         SecureRandom secureRandom = this.secureRandom;
-        if (secureRandom == null) {
-            if (trySHA1PRNG) {
-                try {
-                    secureRandom = SecureRandom.getInstance("SHA1PRNG");
-                } catch (Exception e) {
-                    trySHA1PRNG = false;
-                }
+
+        // Try preferred PRNG, which defaults to NativePRNGNonBlocking
+        if (secureRandom == null && tryPreferredPRNG) {
+            try {
+                secureRandom = SecureRandom.getInstance(Options.PREFERRED_PRNG.load());
+            } catch (Exception e) {
+                tryPreferredPRNG = false;
             }
-            if (secureRandom == null) {
-                secureRandom = new SecureRandom();
-            }
-            this.secureRandom = secureRandom;
         }
+
+        // Try SHA1PRNG
+        if (secureRandom == null && trySHA1PRNG) {
+            try {
+                secureRandom = SecureRandom.getInstance("SHA1PRNG");
+            } catch (Exception e) {
+                trySHA1PRNG = false;
+            }
+        }
+
+        // Just let JDK do whatever it does
+        if (secureRandom == null) {
+            secureRandom = new SecureRandom();
+        }
+
+        this.secureRandom = secureRandom;
+
         return secureRandom;
     }
 
@@ -177,6 +193,7 @@ public final class ThreadContext {
         }
 
         this.runtimeCache = runtime.getRuntimeCache();
+        this.sites = runtime.sites;
 
         // TOPLEVEL self and a few others want a top-level scope.  We create this one right
         // away and then pass it into top-level parse so it ends up being the top level.
@@ -682,7 +699,7 @@ public final class ThreadContext {
             traceArray[i] = new RubyString(runtime, stringClass, fullTrace[i + level].mriStyleString());
         }
 
-        RubyArray backTrace = RubyArray.newArrayNoCopy(runtime, traceArray);
+        RubyArray backTrace = RubyArray.newArrayMayCopy(runtime, traceArray);
         if (RubyInstanceConfig.LOG_CALLERS) TraceType.logCaller(backTrace);
         return backTrace;
     }
@@ -1080,10 +1097,8 @@ public final class ThreadContext {
     }
 
     public int profileEnter(String name, DynamicMethod nextMethod) {
-        if (isProfiling()) {
-            // TODO This can be removed, because the profiled method will be added in the MethodEnhancer if necessary
-            getRuntime().getProfiledMethods().addProfiledMethod( name, nextMethod );
-        }
+        // profiled method is added in the MethodEnhancer (if necessary)
+        // @see BuiltinProfilingService.DefaultMethodEnhancer
         return profileEnter((int) nextMethod.getSerialNumber());
     }
 

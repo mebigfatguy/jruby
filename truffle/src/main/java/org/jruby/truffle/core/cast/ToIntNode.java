@@ -37,6 +37,8 @@ public abstract class ToIntNode extends RubyNode {
     private final ConditionProfile wasLong = ConditionProfile.createBinaryProfile();
     private final ConditionProfile wasLongInRange = ConditionProfile.createBinaryProfile();
 
+    private final BranchProfile errorProfile = BranchProfile.create();
+
     public static ToIntNode create() {
         return ToIntNodeGen.create(null);
     }
@@ -58,7 +60,7 @@ public abstract class ToIntNode extends RubyNode {
             }
         }
 
-        CompilerDirectives.transferToInterpreter();
+        errorProfile.enter();
         if (RubyGuards.isRubyBignum(object)) {
             throw new RaiseException(coreExceptions().rangeError("bignum too big to convert into `long'", this));
         } else {
@@ -86,8 +88,8 @@ public abstract class ToIntNode extends RubyNode {
     @Specialization
     public Object coerceDouble(VirtualFrame frame, double value) {
         if (floatToIntNode == null) {
-            CompilerDirectives.transferToInterpreter();
-            floatToIntNode = insert(FloatNodesFactory.ToINodeFactory.create(getContext(), getSourceSection(), null));
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            floatToIntNode = insert(FloatNodesFactory.ToINodeFactory.create(getContext(), null, null));
         }
         return floatToIntNode.executeToI(frame, value);
     }
@@ -106,13 +108,13 @@ public abstract class ToIntNode extends RubyNode {
 
     private Object coerceObject(VirtualFrame frame, Object object, BranchProfile errorProfile) {
         if (toIntNode == null) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             toIntNode = insert(DispatchHeadNodeFactory.createMethodCall(getContext()));
         }
 
         final Object coerced;
         try {
-            coerced = toIntNode.call(frame, object, "to_int", null);
+            coerced = toIntNode.call(frame, object, "to_int");
         } catch (RaiseException e) {
             errorProfile.enter();
             if (Layouts.BASIC_OBJECT.getLogicalClass(e.getException()) == coreLibrary().getNoMethodErrorClass()) {

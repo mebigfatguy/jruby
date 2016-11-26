@@ -9,7 +9,6 @@
  */
 package org.jruby.truffle.language.methods;
 
-import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.dsl.UnsupportedSpecializationException;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -33,6 +32,7 @@ public class ExceptionTranslatingNode extends RubyNode {
     private final BranchProfile controlProfile = BranchProfile.create();
     private final BranchProfile arithmeticProfile = BranchProfile.create();
     private final BranchProfile unsupportedProfile = BranchProfile.create();
+    private final BranchProfile errorProfile = BranchProfile.create();
 
     public ExceptionTranslatingNode(RubyContext context, SourceSection sourceSection, RubyNode child,
                                     UnsupportedOperationBehavior unsupportedOperationBehavior) {
@@ -55,16 +55,18 @@ public class ExceptionTranslatingNode extends RubyNode {
             unsupportedProfile.enter();
             throw new RaiseException(translate(exception));
         } catch (TruffleFatalException exception) {
-            CompilerDirectives.transferToInterpreter();
+            errorProfile.enter();
             throw exception;
-        } catch (org.jruby.exceptions.RaiseException e) {
-            CompilerDirectives.transferToInterpreter();
-            throw new RaiseException(getContext().getJRubyInterop().toTruffle(e.getException(), this));
         } catch (StackOverflowError error) {
-            CompilerDirectives.transferToInterpreter();
+            errorProfile.enter();
             throw new RaiseException(translate(error));
+        } catch (ThreadDeath death) {
+            throw death;
+        } catch (IllegalArgumentException e) {
+            errorProfile.enter();
+            throw new RaiseException(translate(e));
         } catch (Throwable exception) {
-            CompilerDirectives.transferToInterpreter();
+            errorProfile.enter();
             throw new RaiseException(translate(exception));
         }
     }
@@ -78,12 +80,28 @@ public class ExceptionTranslatingNode extends RubyNode {
         return coreExceptions().zeroDivisionError(this, exception);
     }
 
+    @TruffleBoundary
     private DynamicObject translate(StackOverflowError error) {
         if (getContext().getOptions().EXCEPTIONS_PRINT_JAVA) {
             error.printStackTrace();
         }
 
         return coreExceptions().systemStackErrorStackLevelTooDeep(this, error);
+    }
+
+    @TruffleBoundary
+    private DynamicObject translate(IllegalArgumentException exception) {
+        if (getContext().getOptions().EXCEPTIONS_PRINT_JAVA) {
+            exception.printStackTrace();
+        }
+
+        String message = exception.getMessage();
+
+        if (message == null) {
+            message = exception.toString();
+        }
+
+        return coreExceptions().argumentError(message, this);
     }
 
     @TruffleBoundary
@@ -154,23 +172,36 @@ public class ExceptionTranslatingNode extends RubyNode {
         }
     }
 
+    @TruffleBoundary
     public DynamicObject translate(Throwable throwable) {
         if (getContext().getOptions().EXCEPTIONS_PRINT_JAVA
                 || getContext().getOptions().EXCEPTIONS_PRINT_UNCAUGHT_JAVA) {
             throwable.printStackTrace();
         }
 
-        final StringBuilder message = new StringBuilder();
-        message.append(throwable.getClass().getSimpleName());
-        message.append(" ");
-        message.append(throwable.getMessage());
+        final String message = throwable.getMessage();
+        final String reportedMessage;
 
-        if (throwable.getStackTrace().length > 0) {
-            message.append(" ");
-            message.append(throwable.getStackTrace()[0].toString());
+        if (message != null && message.startsWith("LLVM error")) {
+            reportedMessage = message;
+        } else {
+            final StringBuilder messageBuilder = new StringBuilder();
+            messageBuilder.append(throwable.getClass().getSimpleName());
+            messageBuilder.append(" ");
+            if (message != null) {
+                messageBuilder.append(message);
+            } else {
+                messageBuilder.append("<no message>");
+            }
+
+            if (throwable.getStackTrace().length > 0) {
+                messageBuilder.append(" ");
+                messageBuilder.append(throwable.getStackTrace()[0].toString());
+            }
+            reportedMessage = messageBuilder.toString();
         }
 
-        return coreExceptions().internalError(message.toString(), this, throwable);
+        return coreExceptions().internalError(reportedMessage, this, throwable);
     }
 
 }

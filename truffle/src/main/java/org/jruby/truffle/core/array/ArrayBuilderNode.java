@@ -85,13 +85,13 @@ public abstract class ArrayBuilderNode extends Node {
 
         @Override
         public Object start() {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             return new Object[getContext().getOptions().ARRAY_UNINITIALIZED_SIZE];
         }
 
         @Override
         public Object start(int length) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             return new Object[length];
         }
 
@@ -103,7 +103,7 @@ public abstract class ArrayBuilderNode extends Node {
 
         @Override
         public Object appendArray(Object store, int index, DynamicObject array) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
 
             for (Object value : ArrayOperations.toIterable(array)) {
                 store = appendValue(store, index, value);
@@ -115,7 +115,7 @@ public abstract class ArrayBuilderNode extends Node {
 
         @Override
         public Object appendValue(Object store, int index, Object value) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
 
             screen(value);
 
@@ -183,7 +183,7 @@ public abstract class ArrayBuilderNode extends Node {
         @Override
         public Object start(int length) {
             if (length > expectedLength) {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 return restart(length);
             }
 
@@ -193,7 +193,7 @@ public abstract class ArrayBuilderNode extends Node {
         @Override
         public Object ensure(Object store, int length) {
             if (length > ((int[]) store).length) {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
 
                 final Object[] newStore = ArrayUtils.box((int[]) store);
 
@@ -219,7 +219,7 @@ public abstract class ArrayBuilderNode extends Node {
                 return store;
             }
 
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
 
             return replace(new ObjectArrayBuilderNode(getContext(), expectedLength)).
                     appendArray(ArrayUtils.box((int[]) store), index, array);
@@ -232,11 +232,12 @@ public abstract class ArrayBuilderNode extends Node {
                 ((int[]) store)[index] = (int) value;
                 return store;
             } else {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 return appendValueFallback(store, index, value, expectedLength);
             }
         }
 
+        @Override
         public Object finish(Object store, int length) {
             return store;
         }
@@ -261,7 +262,7 @@ public abstract class ArrayBuilderNode extends Node {
         @Override
         public Object start(int length) {
             if (length > expectedLength) {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 return restart(length);
             }
 
@@ -270,7 +271,7 @@ public abstract class ArrayBuilderNode extends Node {
 
         @Override
         public Object ensure(Object store, int length) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             throw new UnsupportedOperationException();
         }
 
@@ -287,7 +288,7 @@ public abstract class ArrayBuilderNode extends Node {
                 return store;
             }
 
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
 
             return replace(new ObjectArrayBuilderNode(getContext(), expectedLength)).
                     appendArray(ArrayUtils.box((long[]) store), index, array);
@@ -305,10 +306,11 @@ public abstract class ArrayBuilderNode extends Node {
                     return store;
                 }
             }
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             return appendValueFallback(store, index, value, expectedLength);
         }
 
+        @Override
         public Object finish(Object store, int length) {
             return store;
         }
@@ -333,7 +335,7 @@ public abstract class ArrayBuilderNode extends Node {
         @Override
         public Object start(int length) {
             if (length > expectedLength) {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 return restart(length);
             }
 
@@ -343,7 +345,7 @@ public abstract class ArrayBuilderNode extends Node {
         @Override
         public Object ensure(Object store, int length) {
             if (length > ((double[]) store).length) {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 final Object[] newStore = ArrayUtils.box((double[]) store);
                 final UninitializedArrayBuilderNode newNode = new UninitializedArrayBuilderNode(getContext());
                 replace(newNode);
@@ -366,7 +368,7 @@ public abstract class ArrayBuilderNode extends Node {
                 return store;
             }
 
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
 
             return replace(new ObjectArrayBuilderNode(getContext(), expectedLength)).
                     appendArray(ArrayUtils.box((double[]) store), index, array);
@@ -379,11 +381,12 @@ public abstract class ArrayBuilderNode extends Node {
                 ((double[]) store)[index] = (double) value;
                 return store;
             } else {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 return appendValueFallback(store, index, value, expectedLength);
             }
         }
 
+        @Override
         public Object finish(Object store, int length) {
             return store;
         }
@@ -410,7 +413,7 @@ public abstract class ArrayBuilderNode extends Node {
         @Override
         public Object start(int length) {
             if (length > expectedLength) {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 return restart(length);
             }
 
@@ -420,7 +423,7 @@ public abstract class ArrayBuilderNode extends Node {
         @Override
         public Object ensure(Object store, int length) {
             if (length > ((Object[]) store).length) {
-                CompilerDirectives.transferToInterpreter();
+                CompilerDirectives.transferToInterpreterAndInvalidate();
 
                 final UninitializedArrayBuilderNode newNode = new UninitializedArrayBuilderNode(getContext());
                 replace(newNode);
@@ -497,6 +500,7 @@ public abstract class ArrayBuilderNode extends Node {
             return store;
         }
 
+        @Override
         public Object finish(Object store, int length) {
             return store;
         }

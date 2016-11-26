@@ -10,32 +10,18 @@
 package org.jruby.truffle.language.loader;
 
 import com.oracle.truffle.api.CallTarget;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
-import com.oracle.truffle.api.interop.ArityException;
-import com.oracle.truffle.api.interop.ForeignAccess;
-import com.oracle.truffle.api.interop.Message;
-import com.oracle.truffle.api.interop.TruffleObject;
-import com.oracle.truffle.api.interop.UnsupportedMessageException;
-import com.oracle.truffle.api.interop.UnsupportedTypeException;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
-import com.oracle.truffle.api.nodes.Node;
-import com.oracle.truffle.api.object.DynamicObject;
 import com.oracle.truffle.api.source.Source;
-import org.jcodings.specific.UTF8Encoding;
-import org.jruby.truffle.Layouts;
 import org.jruby.truffle.RubyContext;
 import org.jruby.truffle.RubyLanguage;
 import org.jruby.truffle.core.array.ArrayOperations;
-import org.jruby.truffle.core.array.ArrayUtils;
-import org.jruby.truffle.core.string.StringOperations;
-import org.jruby.truffle.language.RubyRootNode;
+import org.jruby.truffle.language.control.JavaException;
 import org.jruby.truffle.language.control.RaiseException;
-import org.jruby.truffle.language.methods.DeclarationContext;
-import org.jruby.truffle.language.parser.ParserContext;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.concurrent.locks.ReentrantLock;
 
 public class FeatureLoader {
 
@@ -50,19 +36,12 @@ public class FeatureLoader {
         this.context = context;
     }
 
-    public boolean require(VirtualFrame frame, String feature, IndirectCallNode callNode) {
-        final String featurePath = findFeature(feature);
-
-        if (featurePath == null) {
-            throw new RaiseException(context.getCoreExceptions().loadErrorCannotLoad(
-                    feature,
-                    callNode));
-        }
-
-        return doRequire(frame, featurePath, callNode);
+    public ReentrantLockFreeingMap<String> getFileLocks() {
+        return fileLocks;
     }
 
-    private String findFeature(String feature) {
+    @TruffleBoundary
+    public String findFeature(String feature) {
         final String currentDirectory = context.getNativePlatform().getPosix().getcwd();
 
         if (feature.startsWith("./")) {
@@ -92,16 +71,26 @@ public class FeatureLoader {
     }
 
     private String findFeatureWithAndWithoutExtension(String path) {
-        final String asCExt = findFeatureWithExactPath(path + RubyLanguage.CEXT_EXTENSION);
+        if (path.endsWith(".so")) {
+            final String base = path.substring(0, path.length() - 3);
 
-        if (asCExt != null) {
-            return asCExt;
+            final String asSO = findFeatureWithExactPath(base + RubyLanguage.CEXT_EXTENSION);
+
+            if (asSO != null) {
+                return asSO;
+            }
         }
 
         final String withExtension = findFeatureWithExactPath(path + RubyLanguage.EXTENSION);
 
         if (withExtension != null) {
             return withExtension;
+        }
+
+        final String asSU = findFeatureWithExactPath(path + RubyLanguage.CEXT_EXTENSION);
+
+        if (asSU != null) {
+            return asSU;
         }
 
         final String withoutExtension = findFeatureWithExactPath(path);
@@ -137,153 +126,49 @@ public class FeatureLoader {
         }
     }
 
-    private boolean doRequire(
-            final VirtualFrame frame,
-            final String expandedPath,
-            final IndirectCallNode callNode) {
-
-        if (isFeatureLoaded(expandedPath)) {
-            return false;
-        }
-
-        while (true) {
-            final ReentrantLock lock = fileLocks.get(expandedPath);
-
-            if (lock.isHeldByCurrentThread()) {
-                // circular require
-                // TODO (pitr-ch 20-Mar-2016): warn user
-                return false;
-            }
-
-            if (!fileLocks.lock(callNode, context.getThreadManager(), expandedPath, lock)) {
-                continue;
-            }
-
-            try {
-                if (isFeatureLoaded(expandedPath)) {
-                    return false;
-                }
-
-                final Source source;
-
-                try {
-                    source = context.getSourceCache().getSource(expandedPath);
-                } catch (IOException e) {
-                    return false;
-                }
-
-                final String mimeType = source.getMimeType();
-
-                switch (mimeType) {
-                    case RubyLanguage.MIME_TYPE: {
-                        final RubyRootNode rootNode = context.getCodeLoader().parse(
-                                source,
-                                UTF8Encoding.INSTANCE,
-                                ParserContext.TOP_LEVEL,
-                                null,
-                                true,
-                                callNode);
-
-                        final CodeLoader.DeferredCall deferredCall = context.getCodeLoader().prepareExecute(
-                                ParserContext.TOP_LEVEL,
-                                DeclarationContext.TOP_LEVEL,
-                                rootNode,
-                                null,
-                                context.getCoreLibrary().getMainObject());
-
-                        deferredCall.call(frame, callNode);
-                    }
-                    break;
-
-                    case RubyLanguage.CEXT_MIME_TYPE: {
-                        ensureCExtImplementationLoaded(frame, callNode);
-
-                        final CallTarget callTarget;
-
-                        try {
-                            callTarget = context.getEnv().parse(source);
-                        } catch (IOException e) {
-                            throw new RuntimeException(e);
-                        }
-
-                        callNode.call(frame, callTarget, new Object[]{});
-
-                        final Object initFunction = context.getEnv().importSymbol("@Init_" + getBaseName(
-                                expandedPath));
-
-                        if (!(initFunction instanceof TruffleObject)) {
-                            throw new UnsupportedOperationException();
-                        }
-
-                        final TruffleObject initFunctionObject = (TruffleObject) initFunction;
-
-                        final Node isExecutableNode = Message.IS_EXECUTABLE.createNode();
-
-                        if (!ForeignAccess.sendIsExecutable(
-                                isExecutableNode,
-                                frame,
-                                initFunctionObject)) {
-                            throw new UnsupportedOperationException();
-                        }
-
-                        final Node executeNode = Message.createExecute(0).createNode();
-
-                        try {
-                            ForeignAccess.sendExecute(executeNode, frame, initFunctionObject);
-                        } catch (UnsupportedTypeException | ArityException | UnsupportedMessageException e) {
-                            throw new RuntimeException(e);
-                        }
-                    }
-                    break;
-
-                    default:
-                        throw new RaiseException(context.getCoreExceptions().internalError(
-                                        "unknown language " + mimeType + " for " + expandedPath,
-                                        callNode));
-                }
-
-                final DynamicObject pathString = StringOperations.createString(
-                        context,
-                        StringOperations.encodeRope(expandedPath, UTF8Encoding.INSTANCE));
-
-                addToLoadedFeatures(pathString);
-
-                return true;
-            } finally {
-                fileLocks.unlock(expandedPath, lock);
-            }
-        }
+    @TruffleBoundary
+    private boolean isSulongAvailable() {
+        return context.getEnv().isMimeTypeSupported(RubyLanguage.CEXT_MIME_TYPE);
     }
 
-    private void ensureCExtImplementationLoaded(VirtualFrame frame, IndirectCallNode callNode) {
+    public void ensureCExtImplementationLoaded(VirtualFrame frame, String feature, IndirectCallNode callNode) {
         synchronized (cextImplementationLock) {
             if (cextImplementationLoaded) {
                 return;
             }
 
-            final CallTarget callTarget;
-
-            try {
-                callTarget = context.getEnv().parse(Source.fromFileName(context.getJRubyRuntime().getJRubyHome() + "/lib/ruby/truffle/cext/ruby.su"));
-            } catch (IOException e) {
-                throw new RuntimeException(e);
+            if (!isSulongAvailable()) {
+                throw new RaiseException(context.getCoreExceptions().loadError("Sulong is required to support C extensions, and it doesn't appear to be available", feature, null));
             }
 
-            callNode.call(frame, callTarget, new Object[]{});
+            final CallTarget callTarget = getCExtLibRuby(feature);
+            callNode.call(frame, callTarget, new Object[] {});
 
             cextImplementationLoaded = true;
         }
     }
 
-    private String getBaseName(String path) {
-        final String name = new File(path).getName();
+    @TruffleBoundary
+    private CallTarget getCExtLibRuby(String feature) {
+        final String path = context.getJRubyHome() + "/lib/ruby/truffle/cext/ruby.su";
 
-        final int firstDot = name.indexOf('.');
+        if (!new File(path).exists()) {
+            throw new RaiseException(context.getCoreExceptions().loadError("This JRuby distribution does not have the C extension implementation file ruby.su", feature, null));
+        }
 
-        if (firstDot == -1) {
-            return name;
-        } else {
-            return name.substring(0, firstDot);
+        try {
+            return parseSource(context.getSourceLoader().load(path));
+        } catch (Exception e) {
+            throw new JavaException(e);
+        }
+    }
+
+    @TruffleBoundary
+    public CallTarget parseSource(Source source) {
+        try {
+            return context.getEnv().parse(source);
+        } catch (Exception e) {
+            throw new JavaException(e);
         }
     }
 
@@ -291,38 +176,8 @@ public class FeatureLoader {
     // it can still be accessed and modified (rare) by Ruby code which may cause issues
     private final Object loadedFeaturesLock = new Object();
 
-    private boolean isFeatureLoaded(String feature) {
-        synchronized (loadedFeaturesLock) {
-            final DynamicObject loadedFeatures = context.getCoreLibrary().getLoadedFeatures();
-
-            for (Object loaded : ArrayOperations.toIterable(loadedFeatures)) {
-                if (loaded.toString().equals(feature)) {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-    }
-
-    private void addToLoadedFeatures(DynamicObject feature) {
-        synchronized (loadedFeaturesLock) {
-
-            final DynamicObject loadedFeatures = context.getCoreLibrary().getLoadedFeatures();
-            final int size = Layouts.ARRAY.getSize(loadedFeatures);
-            final Object[] store = (Object[]) Layouts.ARRAY.getStore(loadedFeatures);
-
-            if (size < store.length) {
-                store[size] = feature;
-            } else {
-                final Object[] newStore = ArrayUtils.grow(
-                        store,
-                        ArrayUtils.capacityForOneMore(context, store.length));
-                newStore[size] = feature;
-                Layouts.ARRAY.setStore(loadedFeatures, newStore);
-            }
-            Layouts.ARRAY.setSize(loadedFeatures, size + 1);
-        }
+    public Object getLoadedFeaturesLock() {
+        return loadedFeaturesLock;
     }
 
 }

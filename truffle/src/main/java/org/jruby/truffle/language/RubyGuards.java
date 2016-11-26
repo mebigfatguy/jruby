@@ -23,6 +23,14 @@ public abstract class RubyGuards {
         return value instanceof Boolean;
     }
 
+    public static boolean isByte(Object value) {
+        return value instanceof Byte;
+    }
+
+    public static boolean isShort(Object value) {
+        return value instanceof Short;
+    }
+
     public static boolean isInteger(Object value) {
         return value instanceof Integer;
     }
@@ -61,20 +69,20 @@ public abstract class RubyGuards {
         return Layouts.BIG_DECIMAL.isBigDecimal(value);
     }
 
-    public static boolean isIntegerFixnumRange(Object object) {
-        return Layouts.INTEGER_FIXNUM_RANGE.isIntegerFixnumRange(object);
+    public static boolean isIntRange(Object object) {
+        return Layouts.INT_RANGE.isIntRange(object);
     }
 
-    public static boolean isIntegerFixnumRange(DynamicObject object) {
-        return Layouts.INTEGER_FIXNUM_RANGE.isIntegerFixnumRange(object);
+    public static boolean isIntRange(DynamicObject object) {
+        return Layouts.INT_RANGE.isIntRange(object);
     }
 
-    public static boolean isLongFixnumRange(Object object) {
-        return Layouts.LONG_FIXNUM_RANGE.isLongFixnumRange(object);
+    public static boolean isLongRange(Object object) {
+        return Layouts.LONG_RANGE.isLongRange(object);
     }
 
-    public static boolean isLongFixnumRange(DynamicObject object) {
-        return Layouts.LONG_FIXNUM_RANGE.isLongFixnumRange(object);
+    public static boolean isLongRange(DynamicObject object) {
+        return Layouts.LONG_RANGE.isLongRange(object);
     }
 
     public static boolean isObjectRange(Object object) {
@@ -86,7 +94,7 @@ public abstract class RubyGuards {
     }
 
     public static boolean isRubyRange(Object value) {
-        return isIntegerFixnumRange(value) || isLongFixnumRange(value) || isObjectRange(value);
+        return isIntRange(value) || isLongRange(value) || isObjectRange(value);
     }
 
     public static boolean isRubyArray(Object value) {
@@ -123,6 +131,10 @@ public abstract class RubyGuards {
 
     public static boolean isRubyModule(DynamicObject value) {
         return Layouts.MODULE.isModule(value);
+    }
+
+    public static boolean isRubyMutex(DynamicObject value) {
+        return Layouts.MUTEX.isMutex(value);
     }
 
     public static boolean isRubyRegexp(Object value) {
@@ -229,6 +241,10 @@ public abstract class RubyGuards {
         return Layouts.TRACE_POINT.isTracePoint(object);
     }
 
+    public static boolean isRubyIO(DynamicObject object) {
+        return Layouts.IO.isIO(object);
+    }
+
     public static boolean isNullPointer(DynamicObject pointer) {
         return Layouts.POINTER.getPointer(pointer) == PointerPrimitiveNodes.NULL_POINTER;
     }
@@ -275,6 +291,12 @@ public abstract class RubyGuards {
 
     public static boolean isInfinity(double value) {
         return Double.isInfinite(value);
+    }
+
+    // Composite
+
+    public static boolean isSingletonClass(DynamicObject value) {
+        return isRubyClass(value) && Layouts.CLASS.getIsSingleton(value);
     }
 
 }

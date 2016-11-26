@@ -108,11 +108,11 @@ public abstract class HashLiteralNode extends RubyNode {
 
                 if (stringKeyProfile.profile(RubyGuards.isRubyString(key))) {
                     if (!isFrozen(key)) {
-                        key = freezeNode.call(frame, dupNode.call(frame, key, "dup", null), "freeze", null);
+                        key = freezeNode.call(frame, dupNode.call(frame, key, "dup"), "freeze");
                     }
                 }
 
-                final int hashed = hashNode.hash(frame, key);
+                final int hashed = hashNode.hash(frame, key, false);
 
                 final Object value = keyValues[n * 2 + 1].execute(frame);
 
@@ -135,8 +135,8 @@ public abstract class HashLiteralNode extends RubyNode {
 
         protected boolean isFrozen(Object object) {
             if (isFrozenNode == null) {
-                CompilerDirectives.transferToInterpreter();
-                isFrozenNode = insert(IsFrozenNodeGen.create(getContext(), getSourceSection(), null));
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                isFrozenNode = insert(IsFrozenNodeGen.create(getContext(), null, null));
             }
             return isFrozenNode.executeIsFrozen(object);
         }
@@ -155,8 +155,8 @@ public abstract class HashLiteralNode extends RubyNode {
         @Override
         public Object execute(VirtualFrame frame) {
             if (setNode == null) {
-                CompilerDirectives.transferToInterpreter();
-                setNode = insert(SetNodeGen.create(getContext(), getEncapsulatingSourceSection(), null, null, null, null));
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                setNode = insert(SetNodeGen.create(getContext(), null, null, null, null, null));
             }
 
             final int bucketsCount = BucketsStrategy.capacityGreaterThan(keyValues.length / 2) * BucketsStrategy.OVERALLOCATE_FACTOR;

@@ -20,7 +20,6 @@ import org.jruby.truffle.Layouts;
 import org.jruby.truffle.RubyContext;
 import org.jruby.truffle.language.RubyNode;
 import org.jruby.truffle.language.objects.AllocateObjectNode;
-import org.jruby.truffle.language.objects.AllocateObjectNodeGen;
 
 import static org.jruby.truffle.core.array.ArrayHelpers.getSize;
 
@@ -36,7 +35,7 @@ public abstract class ArrayReadSliceNormalizedNode extends RubyNode {
 
     public ArrayReadSliceNormalizedNode(RubyContext context, SourceSection sourceSection) {
         super(context, sourceSection);
-        allocateObjectNode = AllocateObjectNodeGen.create(context, sourceSection, null, null);
+        allocateObjectNode = AllocateObjectNode.create();
     }
 
     public abstract DynamicObject executeReadSlice(DynamicObject array, int index, int length);

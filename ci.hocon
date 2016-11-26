@@ -1,13 +1,5 @@
 jt: [ruby, tool/jt.rb]
 
-common-setup: [
-  [rm, -rf, mx.jruby],
-  [mx, sclone, --kind, git, "https://github.com/jruby/jruby-build-pack.git", jruby-build-pack],
-  [cp, bin/jruby.bash, bin/jruby],
-  [chmod, +x, bin/jruby],
-  ${jt} [build, --offline]
-]
-
 common: {
   packages: {
     git:        ">=1.8.3"
@@ -16,61 +8,82 @@ common: {
     ruby:       ">=2.1.0"
     "java/jdk": "==1.8.0/60"
   }
-  
+
   environment: {
-    CI: "true"
+    CI: "true",
+    JAVA_OPTS: -Xmx2G
   }
-  
-  setup: ${common-setup}
 
-  timelimit: "30:00"
-}
-
-graal-core: {
-  setup: ${common-setup} [
-    [mkdir, graal-workspace],
-    [cd, graal-workspace],
-    [mx, sclone, --kind, git, "https://github.com/graalvm/graal-core.git", graal-core],
-    [cd, graal-core],
-    [git, checkout, "3a28fca1b331f9912dabd231052354cffa9dee9c"],
-    [mx, sforceimports],
-    [mx, --vm, server, build],
-    [cd, ../..]
+  setup: [
+    [mx, sclone, --kind, git, "https://github.com/jruby/jruby-build-pack.git", jruby-build-pack],
+    [cp, bin/jruby.bash, bin/jruby],
+    [chmod, +x, bin/jruby],
+    ${jt} [build, --build-pack]
   ]
-  
-  environment: {
-    GRAAL_BIN: graal-workspace/jvmci/jdk1.8.0_60/product/bin/java
-  }
+
+  timelimit: "01:00:00"
 }
 
-graalvm: {
+graal-vm: {
   downloads: {
     GRAALVM_DIR: {
       name: graalvm-release,
-      version: "0.11",
+      version: "0.18",
       platformspecific: true
     }
   }
-  
+
   environment: {
-    GRAAL_BIN: "$GRAALVM_DIR/bin/java"
+    GRAALVM_BIN: "$GRAALVM_DIR/bin/java"
+    HOST_VM: server,
+    HOST_VM_CONFIG: graal-vm
   }
 }
 
 gate-caps: {
-  capabilities: [linux, amd64, gate, post-push]
+  capabilities: [linux, amd64]
+  targets: [gate, post-push]
+}
+
+gem-test-pack: {
+  setup: [
+    [mx, sclone, --kind, git, "https://github.com/jruby/jruby-truffle-gem-test-pack.git", ../jruby-truffle-gem-test-pack]
+  ]
+}
+
+test-gems: {
+  environment: {
+    GEM_HOME: ../jruby-truffle-gem-test-pack/gems
+  }
+  
+  setup: ${common.setup} ${gem-test-pack.setup}
+
+  run: [
+    ${jt} [test, gems]
+  ]
+}
+
+test-ecosystem: {
+  setup: ${common.setup} ${gem-test-pack.setup}
+
+  run: [
+    [bin/jruby, bin/gem, install, ../jruby-truffle-gem-test-pack/gems/cache/bundler-1.12.5.gem],
+    ${jt} [test, ecosystem]
+  ]
 }
 
 builds: [
   {name: ruby-test-fast} ${common} ${gate-caps} {run: [${jt} [test, fast]]},
+  {name: ruby-test-tck} ${common} ${gate-caps} {run: [${jt} [test, tck]]},
   {name: ruby-test-specs-command-line} ${common} ${gate-caps} {run: [${jt} [test, specs, ":command_line"]]},
   {name: ruby-test-specs-language} ${common} ${gate-caps} {run: [${jt} [test, specs, ":language"]]},
-  {name: ruby-test-specs-core} ${common} ${gate-caps} {run: [${jt} [test, specs, ":core"]]},
+  {name: ruby-test-specs-core} ${common} ${gate-caps} {run: [${jt} [test, specs, -Gci, ":core"]]},
   {name: ruby-test-specs-library} ${common} ${gate-caps} {run: [${jt} [test, specs, ":library"]]},
   {name: ruby-test-specs-truffle} ${common} ${gate-caps} {run: [${jt} [test, specs, ":truffle"]]},
-  {name: ruby-test-integration} ${common} ${gate-caps} {run: [${jt} [test, integration]]},
-  {name: ruby-test-tck} ${common} ${gate-caps} {run: [${jt} [test, tck]]},
-  {name: ruby-tarball} ${common} ${gate-caps} {run: [${jt} [tarball]]},
-  {name: ruby-test-compiler-graal-core} ${common} ${graal-core} ${gate-caps} {run: [${jt} [test, compiler]]},
-  {name: ruby-test-compiler-graalvm} ${common} ${graalvm} ${gate-caps} {run: [${jt} [test, compiler]]}
+  //{name: ruby-test-integration} ${common} ${gate-caps} {run: [${jt} [test, integration]]},
+  //{name: ruby-test-gems} ${common} ${gate-caps} ${test-gems},
+  //{name: ruby-test-ecosystem} ${common} ${gate-caps} ${test-ecosystem},
+  {name: ruby-test-tarball} ${common} ${gate-caps} {run: [${jt} [tarball]]},
+
+  {name: ruby-test-compiler-graal-vm} ${common} ${graal-vm} ${gate-caps} {run: [${jt} [test, compiler]]},
 ]

@@ -247,7 +247,6 @@ class File < IO
   # the link, not the file referenced by the link).
   # Often not available.
   def self.lchmod(mode, *paths)
-    raise NotImplementedError, "lchmod not implemented on this platform" unless Rubinius::HAVE_LCHMOD
 
     mode = Rubinius::Type.coerce_to(mode, Integer, :to_int)
 
@@ -343,6 +342,14 @@ class File < IO
     end
 
     paths.size
+  end
+
+  def self.mkfifo(path, mode = 0666)
+    mode = Rubinius::Type.coerce_to mode, Integer, :to_int
+    path = Rubinius::Type.coerce_to_path(path)
+    status = Truffle::POSIX.mkfifo(path, mode)
+    Errno.handle path if status != 0
+    status
   end
 
   ##
@@ -821,7 +828,7 @@ class File < IO
       end
 
       if value.prefix? sep
-        ret.gsub!(/#{SEPARATOR}+$/, '')
+        ret.gsub!(/#{SEPARATOR}+$/o, '')
       elsif not ret.suffix? sep
         ret << sep
       end
@@ -1045,16 +1052,6 @@ class File < IO
     Stat.lstat(path).symlink?
   rescue Errno::ENOENT, Errno::ENODIR
     false
-  end
-
-  ##
-  # Copies a file from to to. If to is a directory, copies from to to/from.
-  def self.syscopy(from, to)
-    out = directory?(to) ? to + basename(from) : to
-
-    open(out, 'w') do |f|
-      f.write read(from).read
-    end
   end
 
   ##
@@ -1321,15 +1318,6 @@ class File < IO
     raise IOError, "closed stream" if closed?
     stat.size
   end
-
-  ##
-  # Return the equivalent S-Expression of the file given.
-  # Raises +SyntaxError+ if there is a syntax issue in the
-  # file, making it unparsable.
-  #  File.to_sexp("/tmp/test.rb") #=> s(...)
-  def self.to_sexp(name)
-    File.read(name).to_sexp(name)
-  end
 end     # File
 
 # Inject the constants into IO
@@ -1352,6 +1340,44 @@ class File::Stat
     if mode & S_IWOTH == S_IWOTH
       tmp = mode & (S_IRUGO | S_IWUGO | S_IXUGO)
       return Rubinius::Type.coerce_to tmp, Fixnum, :to_int
+    end
+  end
+end
+
+if Truffle::Safe.io_safe?
+  STDIN = File.new(0)
+  STDOUT = File.new(1)
+  STDERR = File.new(2)
+else
+  STDIN = nil
+  STDOUT = nil
+  STDERR = nil
+end
+
+$stdin = STDIN
+$stdout = STDOUT
+$stderr = STDERR
+
+class << STDIN
+  def external_encoding
+    super || Encoding.default_external
+  end
+end
+
+if Truffle::Safe.io_safe?
+  if STDOUT.tty?
+    STDOUT.sync = true
+  else
+    Truffle::Kernel.at_exit true do
+      STDOUT.flush
+    end
+  end
+
+  if STDERR.tty?
+    STDERR.sync = true
+  else
+    Truffle::Kernel.at_exit true do
+      STDERR.flush
     end
   end
 end

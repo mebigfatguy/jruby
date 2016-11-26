@@ -40,6 +40,9 @@ module Signal
   end
   remove_const :SIGNAL_LIST
 
+  # replace CLD with CHLD since CLD is not recognized by in `new sun.misc.Signal("CLD")`
+  Numbers[Names['CLD']] = Numbers[Names['CHLD']]
+
   @threads = {}
   @handlers = {}
 
@@ -100,13 +103,6 @@ module Signal
 
     return "DEFAULT" unless had_old
     return old ? old : nil
-  end
-
-  def self.run_handler(sig)
-    # Ignore nil handlers
-    if handler = @handlers[sig]
-      handler.call(sig)
-    end
   end
 
   def self.list

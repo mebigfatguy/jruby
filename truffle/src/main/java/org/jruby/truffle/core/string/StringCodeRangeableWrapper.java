@@ -11,6 +11,7 @@ package org.jruby.truffle.core.string;
 
 import com.oracle.truffle.api.object.DynamicObject;
 import org.jcodings.Encoding;
+import org.jruby.truffle.core.encoding.EncodingNodes;
 import org.jruby.truffle.language.RubyGuards;
 import org.jruby.util.ByteList;
 import org.jruby.util.CodeRangeable;
@@ -18,10 +19,12 @@ import org.jruby.util.CodeRangeable;
 public class StringCodeRangeableWrapper implements CodeRangeable {
 
     private final DynamicObject string;
+    private final EncodingNodes.CheckEncodingNode checkEncodingNode;
 
-    public StringCodeRangeableWrapper(DynamicObject string) {
+    public StringCodeRangeableWrapper(DynamicObject string, EncodingNodes.CheckEncodingNode checkEncodingNode) {
         assert RubyGuards.isRubyString(string);
         this.string = string;
+        this.checkEncodingNode = checkEncodingNode;
     }
 
     @Override
@@ -66,12 +69,12 @@ public class StringCodeRangeableWrapper implements CodeRangeable {
 
     @Override
     public final void modifyAndKeepCodeRange() {
-        StringOperations.modifyAndKeepCodeRange(string);
+        StringOperations.keepCodeRange(string);
     }
 
     @Override
     public Encoding checkEncoding(CodeRangeable other) {
-        return StringOperations.checkEncoding(string, other);
+        return checkEncodingNode.executeCheckEncoding(string, ((StringCodeRangeableWrapper) other).string);
     }
 
     @Override

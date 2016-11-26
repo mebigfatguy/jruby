@@ -20,24 +20,44 @@ public class SubstringRope extends Rope {
 
     public SubstringRope(Rope child, int offset, int byteLength, int characterLength, CodeRange codeRange) {
         // TODO (nirvdrum 07-Jan-16) Verify that this rope is only used for character substrings and not arbitrary byte slices. The former should always have the child's code range while the latter may not.
-        this(child, child.getEncoding(), offset, byteLength, characterLength, codeRange);
+        this(child, child.getEncoding(), child.isSingleByteOptimizable(), offset, byteLength, characterLength, codeRange);
     }
 
-    private SubstringRope(Rope child, Encoding encoding, int offset, int byteLength, int characterLength, CodeRange codeRange) {
+    public SubstringRope(Rope child, boolean singleByteOptimizable, int offset, int byteLength, int characterLength, CodeRange codeRange) {
         // TODO (nirvdrum 07-Jan-16) Verify that this rope is only used for character substrings and not arbitrary byte slices. The former should always have the child's code range while the latter may not.
-        super(encoding, codeRange, child.isSingleByteOptimizable(), byteLength, characterLength, child.depth() + 1, null);
+        this(child, child.getEncoding(), singleByteOptimizable, offset, byteLength, characterLength, codeRange);
+    }
+
+    private SubstringRope(Rope child, Encoding encoding, boolean singleByteOptimizable, int offset, int byteLength, int characterLength, CodeRange codeRange) {
+        // TODO (nirvdrum 07-Jan-16) Verify that this rope is only used for character substrings and not arbitrary byte slices. The former should always have the child's code range while the latter may not.
+        super(encoding, codeRange, singleByteOptimizable, byteLength, characterLength, child.depth() + 1, null);
         this.child = child;
         this.offset = offset;
+
+        assert byteLength <= child.byteLength();
     }
 
     @Override
     public Rope withEncoding(Encoding newEncoding, CodeRange newCodeRange) {
         if (newCodeRange != getCodeRange()) {
-            CompilerDirectives.transferToInterpreter();
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             throw new UnsupportedOperationException("Cannot fast-path updating encoding with different code range.");
         }
 
-        return new SubstringRope(getChild(), newEncoding, getOffset(), byteLength(), characterLength(), newCodeRange);
+        return new SubstringRope(getChild(), newEncoding, getChild().isSingleByteOptimizable(), getOffset(), byteLength(), characterLength(), newCodeRange);
+    }
+
+    @Override
+    protected byte[] getBytesSlow() {
+        if (child.getRawBytes() != null) {
+            final byte[] ret = new byte[byteLength()];
+
+            System.arraycopy(child.getRawBytes(), offset, ret, 0, byteLength());
+
+            return ret;
+        }
+
+        return RopeOperations.extractRange(child, offset, byteLength());
     }
 
     @Override
@@ -56,7 +76,8 @@ public class SubstringRope extends Rope {
     @Override
     public String toString() {
         // This should be used for debugging only.
-        return child.toString().substring(offset, offset + byteLength());
+        final byte[] childBytes = RopeOperations.extractRange(child, offset, byteLength());
+        return RopeOperations.decodeUTF8(childBytes, 0, childBytes.length);
     }
 
 }
